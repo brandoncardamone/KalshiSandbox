@@ -47,33 +47,35 @@ def sign_pss_text(private_key: rsa.RSAPrivateKey, text: str) -> str:
 #print(load_private_key_from_file(r"C:\Users\bcard\OneDrive\Desktop\Projects\KalshiSandbox\first key.txt"))
 #print(load_private_key_from_file(api_key_path))
 
-current_time = datetime.datetime.now()
-timestamp = current_time.timestamp()
-current_time_milliseconds = int(timestamp * 1000)
-timestampt_str = str(current_time_milliseconds)
+def my_get_function(path) -> requests.models.Response:
+    current_time = datetime.datetime.now()
+    timestamp = current_time.timestamp()
+    current_time_milliseconds = int(timestamp * 1000)
+    timestampt_str = str(current_time_milliseconds)
 
-private_key = load_private_key_from_file(api_key_path)
+    private_key = load_private_key_from_file(api_key_path)
 
-method = "GET"
-base_url = 'https://external-api.kalshi.com'
-path='/trade-api/v2/portfolio/positions'
+    method = "GET"
+    base_url = 'https://external-api.kalshi.com'
+    #path='/trade-api/v2/portfolio/positions'
 
-# Strip query parameters from path before signing
-path_without_query = path.split('?')[0]
-msg_string = timestampt_str + method + path_without_query
-sig = sign_pss_text(private_key, msg_string)
+    # Strip query parameters from path before signing
+    path_without_query = path.split('?')[0]
+    msg_string = timestampt_str + method + path_without_query
+    sig = sign_pss_text(private_key, msg_string)
 
-headers = {
-    'KALSHI-ACCESS-KEY': api_key_id,
-    'KALSHI-ACCESS-SIGNATURE': sig,
-    'KALSHI-ACCESS-TIMESTAMP': timestampt_str
-}
+    headers = {
+        'KALSHI-ACCESS-KEY': api_key_id,
+        'KALSHI-ACCESS-SIGNATURE': sig,
+        'KALSHI-ACCESS-TIMESTAMP': timestampt_str
+    }
 
-response1 = requests.get(base_url + path, headers=headers)
+    return requests.get(base_url + path, headers=headers)
 
+#response1 = requests.get(base_url + path, headers=headers)
+response1 = my_get_function('/trade-api/v2/portfolio/positions')
 
-
-response2 = requests.get(base_url + path, headers=headers)
+#response2 = requests.get(base_url + path, headers=headers)
 
 #print(response1.text)
 #print()
@@ -92,10 +94,27 @@ print(json.dumps(response1.json(), indent=2))
 
 list_of_positions = response1.json()["market_positions"]
 
+list_of_position_fp = []
+list_of_last_price_dollars = []
 
+list_of_tickers = [] #List of the names of the item bought
+for i in range(len(list_of_positions)): #Populates list
+    list_of_tickers.append(list_of_positions[i]["ticker"])
 
-list_of_cur_perc = [] #list of the current percentages
+print()
+print()
+
+#Populates list of position_fp for each ticker
 for i in range(len(list_of_positions)):
-    list_of_cur_perc.append("pass")
+    list_of_position_fp.append(list_of_positions[i]["position_fp"])
 
-print(list_of_cur_perc)
+#Populates list of last_price_dollars
+for i in range(len(list_of_positions)):
+    specific_ticker = my_get_function(f'/trade-api/v2/markets/{list_of_tickers[i]}').json()
+    list_of_last_price_dollars.append(specific_ticker["market"]["last_price_dollars"])
+
+print(json.dumps(my_get_function(f'/trade-api/v2/markets/{list_of_tickers[0]}').json(), indent=2))
+
+print(list_of_tickers)
+print(list_of_position_fp)
+print(list_of_last_price_dollars)
