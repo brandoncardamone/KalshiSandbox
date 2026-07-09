@@ -72,6 +72,39 @@ def my_get_function(path) -> requests.models.Response:
 
     return requests.get(base_url + path, headers=headers)
 
+def my_expected_value(response1) -> float:
+    list_of_positions = response1.json()["market_positions"]
+
+    list_of_position_fp = []
+    list_of_last_price_dollars = []
+
+    list_of_tickers = [] #List of the names of the item bought
+    for i in range(len(list_of_positions)): #Populates list
+        list_of_tickers.append(list_of_positions[i]["ticker"])
+
+    #Populates list of position_fp for each ticker
+    for i in range(len(list_of_positions)):
+        list_of_position_fp.append(list_of_positions[i]["position_fp"])
+
+    #Populates list of last_price_dollars
+    for i in range(len(list_of_positions)):
+        specific_ticker = my_get_function(f'/trade-api/v2/markets/{list_of_tickers[i]}').json()
+        list_of_last_price_dollars.append(specific_ticker["market"]["last_price_dollars"])
+
+    #Calculates the expected value
+    expected_value = sum(float(a) * float(b) for a, b in zip(list_of_position_fp, list_of_last_price_dollars))
+    
+    return expected_value
+
+def my_expected_profit(response1, expected_value) -> float:
+    list_of_positions = response1.json()["market_positions"]
+    
+    list_of_costs = []
+    for i in range(len(list_of_positions)):
+        list_of_costs.append(float(list_of_positions[i]["fees_paid_dollars"])+float(list_of_positions[i]["market_exposure_dollars"]))
+
+    return(expected_value - sum(a for a in list_of_costs))
+
 #response1 = requests.get(base_url + path, headers=headers)
 response1 = my_get_function('/trade-api/v2/portfolio/positions')
 
@@ -92,29 +125,14 @@ print(json.dumps(response1.json(), indent=2))
 #print("Just the france")
 #print(json.dumps(response1.json()["market_positions"][0]["ticker"], indent=2))
 
-list_of_positions = response1.json()["market_positions"]
 
-list_of_position_fp = []
-list_of_last_price_dollars = []
+#print(json.dumps(my_get_function(f'/trade-api/v2/markets/{list_of_tickers[0]}').json(), indent=2))
 
-list_of_tickers = [] #List of the names of the item bought
-for i in range(len(list_of_positions)): #Populates list
-    list_of_tickers.append(list_of_positions[i]["ticker"])
+#print(list_of_tickers)
+#print(list_of_position_fp)
+#print(list_of_last_price_dollars)
 
-print()
-print()
+expected_value = my_expected_value(response1)
+print(expected_value)
 
-#Populates list of position_fp for each ticker
-for i in range(len(list_of_positions)):
-    list_of_position_fp.append(list_of_positions[i]["position_fp"])
-
-#Populates list of last_price_dollars
-for i in range(len(list_of_positions)):
-    specific_ticker = my_get_function(f'/trade-api/v2/markets/{list_of_tickers[i]}').json()
-    list_of_last_price_dollars.append(specific_ticker["market"]["last_price_dollars"])
-
-print(json.dumps(my_get_function(f'/trade-api/v2/markets/{list_of_tickers[0]}').json(), indent=2))
-
-print(list_of_tickers)
-print(list_of_position_fp)
-print(list_of_last_price_dollars)
+print(my_expected_profit(response1, expected_value))
