@@ -114,7 +114,11 @@ response1 = my_get_function('/trade-api/v2/portfolio/positions')
 #print()
 
 #pprint.pp(response.text, sort_dicts=True)
-print(json.dumps(response1.json(), indent=2))
+
+#USEFUL
+#print(json.dumps(response1.json(), indent=2))
+#USEFUL
+
 
 #print(msg_string)
 #print(sig)
@@ -133,6 +137,6 @@ print(json.dumps(response1.json(), indent=2))
 #print(list_of_last_price_dollars)
 
 expected_value = my_expected_value(response1)
-print(expected_value)
+print(f"Expected value of positions: {expected_value}")
 
-print(my_expected_profit(response1, expected_value))
+print(f"Expected profit of positions: {my_expected_profit(response1, expected_value)}")
