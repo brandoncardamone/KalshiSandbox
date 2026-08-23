@@ -1,0 +1,19 @@
+# --- secrets: never commit ---
+.env
+*.pem
+*.key
+first key.txt
+
+# --- generated data (regenerable via `python run.py --ingest`) ---
+kalshi.db*
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
