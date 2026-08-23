@@ -45,5 +45,9 @@ afterwards. A step is not finished until its bookkeeping is written.
 
 ## Git
 
+**Brandon runs the commits.** At the end of a step, stage the files and hand him
+a suggested commit message — do not run `git commit` or `git push` yourself
+unless he explicitly asks in that moment.
+
 Do not add Claude or Anthropic as a co-author, and do not add a "Generated with
 Claude Code" line to commits or PRs.

@@ -11,6 +11,34 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 
 ---
 
+## ▶ Resume here — last updated 2026-08-23, end of Step 5
+
+**Steps 0–5 complete. Next is Step 6 (calibration core).**
+
+State on disk:
+
+| | |
+|---|---|
+| `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running |
+| Git | Step 4 committed (`1cb5a69`, unpushed). **Step 5 is staged but not committed** |
+| Suggested commit | `Step 5 of plan: Fetch price series and extract 24h horizon observation` |
+| Credentials | Working. `.env` at repo root, key outside all repos in `../Kalshi backtester/key/` |
+
+Re-running `python run.py --ingest` is safe and idempotent but unnecessary —
+every write is an `INSERT OR REPLACE`, so it would simply rebuild the same rows.
+
+**Two live cautions carried into Step 6, both from Step 5's output:**
+
+1. The bid-ask spread at the horizon averages **16.1 cents**. Any backtest edge
+   has to survive crossing that plus fees.
+2. Much of the sample is mutually exclusive buckets (one day's temperature split
+   ~6 ways, exactly one resolving YES by construction). The mid-range bins look
+   heavily overpriced, but part of that may be structural rather than a tradeable
+   inefficiency. The per-category breakdown in Step 7 is what separates the two —
+   do not claim longshot bias from the aggregate curve alone.
+
+---
+
 ## Status at a glance
 
 | # | Step | Status | Backs which resume claim |
@@ -20,7 +48,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 | 2 | `client.py` + connectivity smoke test | ✅ | "asynchronous data pipeline" |
 | 3 | SQLite schema & persistence | ✅ | "queryable SQLite store", "price series" |
 | 4 | Series & market discovery ⟶ **checkpoint** | ✅ | "200+ resolved markets" |
-| 5 | Price-series fetch + full ingest run | ⬜ | "price series", "200+ resolved markets" |
+| 5 | Price-series fetch + full ingest run | ✅ | "price series", "200+ resolved markets" |
 | 6 | Calibration core | ⬜ | "Brier score and log loss", "longshot bias" |
 | 7 | Per-category breakdown | ⬜ | "across event categories" |
 | 8 | Backtest: costs, slippage, drawdown | ⬜ | "costs and slippage", "Sharpe and drawdown" |
@@ -511,7 +539,112 @@ actually clear 200+ markets across 3+ categories with 40+ each.
 
 ---
 
-## Step 5 — Price-series fetch + full ingest ⬜
+## Step 5 — Price-series fetch + full ingest ✅
+*2026-08-23*
+
+**Verdict: works. All four acceptance gates pass, including the halt gate —
+emphatically. 1,983 usable markets and 141,073 candle rows in 1m53s.**
+
+### Built
+
+| Function | Does |
+|---|---|
+| `parse_candle()` | Raw candle → `{ts, yes_bid, yes_ask, price, volume}`, reading `close` from each nested OHLC object via `_num()` |
+| `extract_horizon()` | Picks the last candle **at or before** `settle_ts − 24h`; returns the observation or a skip reason |
+| `fetch_price_series()` | One candlestick call per market; returns all candles **plus** the observation |
+| `run_ingest()` | Orchestrates discovery → fetch → SQLite, in committed chunks of 250 |
+| `verify_ingest()` | The four acceptance gates |
+
+`run.py --ingest` is now wired and prints the summary and gates.
+
+**"At or before" is deliberate.** Candles are hourly and markets settle at
+arbitrary times, so one rarely lands exactly on the 24-hour mark. Taking the last
+candle *before* the target keeps every observation at least a full 24 hours out —
+never accidentally closer to settlement, which would flatter the forecast.
+
+**The full candle series is stored even when no observation can be derived.**
+It's what makes the "price series" claim accurate, and it means a later horizon
+sweep costs no additional API calls.
+
+### Results
+
+```
+discovered      : 2715
+priced          : 1983   (73.0%)
+skipped         :  732
+    quote_out_of_range   617
+    none_at_horizon      115
+candle rows     : 141073   (52.0 per market)
+settle_ts source: {'settlement_ts': 2715}    <- close_time fallback never fired
+tiers           : {'live': 2568, 'historical': 147}
+http            : 3279 requests, 541 rate-limited, all recovered
+```
+
+**Attrition matched the Step 4 prediction closely**, which is the best available
+evidence that the extraction logic is doing what the probe measured:
+
+| Category | Predicted usable | Actual kept | Priced n |
+|---|---|---|---|
+| Sports | 81% | **87.7%** | 813 |
+| Climate and Weather | 76% | **73.1%** | 895 |
+| Politics | 60% | **83.0%** | 83 |
+| Economics | 41% | **41.4%** | 192 |
+
+All four categories clear `min_category_n` = 40, so criterion 10's requirement of
+≥3 qualifying categories is already satisfied going into Step 7.
+
+### The gates
+
+| Criterion | Result |
+|---|---|
+| **2** usable markets | **1,983** vs a floor of 200 ✅ |
+| **3** HALT GATE — direction | mean `p_horizon` **0.5210** for YES (n=521) vs **0.2548** for NO (n=1,462); difference **+0.2662**, **z = 21.0** ✅ |
+| **4** probability range | 0 out of range; min 0.015, max 0.985 ✅ |
+| **9** price series stored | 141,073 candles vs 2,715 markets = **52.0/market** ✅ |
+
+Criterion 3 is the one that mattered. It asks only whether prices point in the
+right direction at all — the weakest claim that still proves prices and outcomes
+are correctly parsed and correctly paired. A z of 21 is not a marginal pass; it
+means the pipeline is sound and the analysis is worth running.
+
+### Two observations worth carrying forward
+
+**The bid-ask spread at the horizon averages 16.1 cents.** That is very wide, and
+it is a real finding about liquidity 24 hours out. It also sets expectations for
+Step 8: a strategy that must cross a 16-cent spread and then pay fees needs a
+very large edge to survive. This is the strongest early signal that the backtest
+may come back negative — which the spec anticipates and which would be reported
+as-is.
+
+**The raw distribution already hints at the answer**, though nothing is claimed
+until Step 6 computes it properly:
+
+```
+p_horizon    n     realized
+0.0-0.1    497      0.032
+0.1-0.2    238      0.134
+0.2-0.3    261      0.303
+0.3-0.4    222      0.333
+0.4-0.5    282      0.238     <- realized well below predicted
+0.5-0.6    259      0.297     <- realized well below predicted
+0.6-0.7     63      0.524
+0.7-0.8     37      0.730
+0.8-0.9     41      0.854
+0.9-1.0     83      0.976
+```
+
+The mid-range bins look substantially overpriced on the YES side. **A caution to
+carry into interpretation:** much of the sample is mutually exclusive buckets
+(one day's temperature split ~6 ways), where exactly one of the group resolves
+YES by construction. Combined with a 16-cent spread, some of this may be
+structural rather than a tradeable inefficiency. Step 7's per-category breakdown
+is what separates those explanations.
+
+### Note
+
+`min` candles per market is **1** — a few markets have almost no price history.
+They are stored, and they are excluded from the analysis automatically because a
+single candle cannot satisfy the 24-hour horizon.
 
 One call per market for hourly candles over the final 7 days, via the live
 endpoint `/series/{series}/markets/{ticker}/candlesticks`. **Every** candle row

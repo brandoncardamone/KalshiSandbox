@@ -245,6 +245,10 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 
 **Market lifetime** — how long a contract trades before settling. Must exceed the horizon or the market cannot contribute an observation. Weather markets live ~40 h, soccer ~24–167 h, index and crypto markets 0–23 h.
 
+**z-score** — how many standard errors apart two estimates are. Used for the halt gate: the mean price of YES-resolving markets versus NO-resolving ones came out **z = 21**, meaning the gap is far too large to be chance. Anything above ~3 is conventionally decisive; 21 is emphatic.
+
+**Halt gate** — a check that stops the project rather than merely warning. Criterion 3 is one: if prices did not point in the right direction, prices or outcomes are misparsed or mispaired, and every downstream number would be meaningless *while still plotting beautifully*. A Brier score on broken data is worse than none, because it looks like a finding.
+
 **Mutually exclusive buckets** — several markets covering one event, of which exactly one can resolve YES. Each day's temperature is split into ~6 ranges, so the weather sample has a **structural base rate of 1/6 ≈ 0.167** and is concentrated at low probabilities by construction, not by chance.
 
 ---
