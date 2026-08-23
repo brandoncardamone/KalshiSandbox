@@ -168,16 +168,29 @@ def longshot_summary(tab: pd.DataFrame, min_bin_n: int = 20) -> dict:
     high = usable[usable["bin_lo"] >= 0.7]
 
     def block(sub):
+        """Aggregate a group of bins and test the delta against noise.
+
+        The standard error is taken under the null hypothesis -- that outcomes
+        arrived at exactly the rate the market priced -- so it uses mean_pred,
+        not realized. Using realized would divide by zero whenever a group of
+        markets all resolved the same way, which is common in the tails: fifty
+        markets priced at 0.95 that all settled YES would otherwise report an
+        infinite z instead of a modest one.
+        """
         if sub.empty:
             return None
         n = int(sub["n"].sum())
         wpred = float((sub["mean_pred"] * sub["n"]).sum() / n)
         wreal = float((sub["realized"] * sub["n"]).sum() / n)
+        se = float(np.sqrt(wpred * (1 - wpred) / n)) if 0 < wpred < 1 else None
         return {
             "n": n,
             "mean_pred": round(wpred, 4),
             "realized": round(wreal, 4),
             "delta": round(wreal - wpred, 4),
+            "se_null": round(se, 4) if se else None,
+            "z": round((wreal - wpred) / se, 2) if se else None,
+            "significant_5pct": bool(se and abs((wreal - wpred) / se) >= 1.96),
         }
 
     return {
@@ -205,6 +218,44 @@ def longshot_summary(tab: pd.DataFrame, min_bin_n: int = 20) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _draw_reliability(
+    ax,
+    tab: pd.DataFrame,
+    color: str,
+    label: str,
+    min_bin_n: int = 20,
+    marker: str = "o",
+    z: int = 3,
+    annotate: bool = True,
+    ms: float = 7,
+    label_small: bool = True,
+) -> None:
+    """Draw one reliability curve with binomial error bars onto `ax`.
+
+    Bins below min_bin_n are drawn hollow and faded rather than omitted: the
+    reader should be able to see that the tail was sampled thinly, not be left
+    to assume the curve simply stops there.
+    """
+    pts = tab[tab["realized"].notna()]
+    big = pts[pts["n"] >= min_bin_n]
+    small = pts[pts["n"] < min_bin_n]
+    if not big.empty:
+        ax.errorbar(big["mean_pred"], big["realized"], yerr=big["se"],
+                    fmt=marker, ms=ms, capsize=4, lw=1.4, color=color,
+                    label=label, zorder=z)
+    if not small.empty:
+        ax.errorbar(small["mean_pred"], small["realized"], yerr=small["se"],
+                    fmt=marker, ms=ms, capsize=4, lw=1.4, color=color,
+                    alpha=0.35, mfc="white", zorder=z,
+                    label=(f"{label} — n<{min_bin_n}, not interpreted"
+                           if label_small else None))
+    if annotate:
+        for r in pts.itertuples():
+            ax.annotate(f"n={int(r.n)}", (r.mean_pred, r.realized),
+                        textcoords="offset points", xytext=(7, -12),
+                        fontsize=7.5, color=color)
+
+
 def plot_calibration(
     tab: pd.DataFrame,
     out_path: str,
@@ -225,24 +276,8 @@ def plot_calibration(
     ax.plot([0, 1], [0, 1], "--", color="#888888", lw=1.2,
             label="perfect calibration", zorder=1)
 
-    def draw(t, color, label, marker="o", z=3, annotate=True):
-        pts = t[t["realized"].notna()]
-        big = pts[pts["n"] >= 20]
-        small = pts[pts["n"] < 20]
-        if not big.empty:
-            ax.errorbar(big["mean_pred"], big["realized"], yerr=big["se"],
-                        fmt=marker, ms=7, capsize=4, lw=1.4, color=color,
-                        label=label, zorder=z)
-        if not small.empty:
-            ax.errorbar(small["mean_pred"], small["realized"], yerr=small["se"],
-                        fmt=marker, ms=7, capsize=4, lw=1.4, color=color,
-                        alpha=0.35, mfc="white", zorder=z,
-                        label=f"{label} — n<20, not interpreted")
-        if annotate:
-            for r in pts.itertuples():
-                ax.annotate(f"n={int(r.n)}", (r.mean_pred, r.realized),
-                            textcoords="offset points", xytext=(7, -12),
-                            fontsize=7.5, color=color)
+    def draw(t, color, label, z=3, annotate=True):
+        _draw_reliability(ax, t, color, label, z=z, annotate=annotate)
 
     if tab_liquid is not None:
         draw(tab, "#d62728", f"all markets (n={n_total:,})", annotate=False)
@@ -337,4 +372,213 @@ def run_calibration(df: pd.DataFrame, config: dict, out_dir: str = "outputs") ->
         "base_rate": full_block["base_rate"],
         "calibration_table": full_block["calibration_table"],
         "longshot": full_block["longshot"],
+    }
+
+
+# --------------------------------------------------------------------------
+# Per-category breakdown  (step 7)
+# --------------------------------------------------------------------------
+
+
+def _cat_entry(name: str, sub: pd.DataFrame, config: dict) -> dict:
+    """Everything measured for a single category, on both samples.
+
+    Both the full category sample and its liquid subsample are scored, because
+    the empty-book cluster found in step 6 is not spread evenly across
+    categories -- reporting only one of the two would credit or blame a category
+    for its order-book depth rather than for its forecasting.
+    """
+    n_bins, min_bin_n = config["n_bins"], config["min_bin_n"]
+    liquid, illiquid = split_by_liquidity(sub, config["max_spread"])
+
+    full_block = _score_block(sub, n_bins, min_bin_n)
+    liq_block = _score_block(liquid, n_bins, min_bin_n) if len(liquid) else None
+
+    return {
+        "category": name,
+        "n_markets": int(len(sub)),
+        "n_liquid": int(len(liquid)),
+        "n_illiquid": int(len(illiquid)),
+        "liquid_pct": round(100.0 * len(liquid) / len(sub), 1) if len(sub) else None,
+        "series": sorted(sub["series_ticker"].unique().tolist()),
+        "n_series": int(sub["series_ticker"].nunique()),
+        "date_range": [int(sub["settle_ts"].min()), int(sub["settle_ts"].max())],
+        "interpreted": bool(len(sub) >= config["min_category_n"]),
+        "note": (
+            None if len(sub) >= config["min_category_n"]
+            else "insufficient sample: n={} < min_category_n={}; "
+                 "reported, not interpreted".format(len(sub), config["min_category_n"])
+        ),
+        "full_sample": full_block,
+        "liquid_sample": liq_block,
+    }
+
+
+def plot_category_calibration(
+    entries: list[dict],
+    out_path: str,
+    horizon_hours: int,
+    max_spread: float,
+    min_category_n: int,
+) -> None:
+    """One reliability diagram per category, on shared axis limits.
+
+    Identical axes on every panel deliberately: the panels exist to be compared
+    to each other, and rescaling each to its own data would make a category that
+    only ever trades between 0.1 and 0.3 look like it spans the whole range.
+    """
+    n = len(entries)
+    ncols = 2 if n > 1 else 1
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6.0 * ncols, 5.8 * nrows),
+                             squeeze=False)
+
+    for ax, e in zip(axes.ravel(), entries):
+        ax.plot([0, 1], [0, 1], "--", color="#888888", lw=1.1, zorder=1)
+
+        full, liq = e["full_sample"], e["liquid_sample"]
+        _draw_reliability(ax, full["_tab"], "#d62728",
+                          "all (n={:,})".format(e["n_markets"]),
+                          z=3, annotate=False, ms=6, label_small=False)
+        if liq is not None:
+            _draw_reliability(ax, liq["_tab"], "#1f77b4",
+                              "spread ≤ {:.2f} (n={:,})".format(max_spread, e["n_liquid"]),
+                              z=4, annotate=False, ms=6, label_small=False)
+
+        flag = "" if e["interpreted"] else "  [n < {}: not interpreted]".format(min_category_n)
+        ax.set_title(
+            "{}{}\nBrier {:.4f} vs base-rate {:.4f}   |   {:.0f}% liquid".format(
+                e["category"], flag, full["brier"], full["baseline_brier"],
+                e["liquid_pct"]),
+            fontsize=10.5,
+        )
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.25, lw=0.6)
+        ax.set_xlabel("Market-implied probability", fontsize=9)
+        ax.set_ylabel("Realized frequency of YES", fontsize=9)
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+        if not e["interpreted"]:
+            for s in ax.spines.values():
+                s.set_color("#d62728")
+                s.set_linewidth(1.6)
+
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+
+    fig.suptitle(
+        "Calibration by event category — implied probability read "
+        "{}h before settlement".format(horizon_hours),
+        fontsize=13,
+    )
+    fig.text(0.5, 0.005,
+             "Hollow faded markers are bins with n < {} and are not "
+             "interpreted. Error bars are binomial standard errors.".format(20),
+             ha="center", fontsize=9, color="#555555")
+    fig.tight_layout(rect=[0, 0.02, 1, 0.97])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def calibration_by_category(df: pd.DataFrame, config: dict,
+                            out_dir: str = "outputs") -> dict:
+    """Repeat the step-6 calibration question inside each event category.
+
+    The aggregate curve mixes categories with very different structures. Daily
+    temperature markets are ~6 mutually exclusive buckets of which exactly one
+    resolves YES, so that sample sits at low probability BY CONSTRUCTION, not
+    because anyone mispriced anything. Splitting by category is what separates a
+    structural artifact from a genuine forecasting error.
+
+    Categories below min_category_n are scored and reported with their n and an
+    explicit note, never dropped -- dropping the thin ones would leave a reader
+    unable to tell a category that was absent from one that was inconvenient.
+    """
+    min_category_n = config["min_category_n"]
+
+    entries = [
+        _cat_entry(name, sub, config)
+        for name, sub in df.groupby("category", sort=False)
+    ]
+    # interpreted categories first, best Brier first within each group
+    entries.sort(key=lambda e: (not e["interpreted"], e["full_sample"]["brier"]))
+
+    plot_category_calibration(
+        entries, "{}/calibration_by_category.png".format(out_dir),
+        horizon_hours=config["horizon_sec"] // 3600,
+        max_spread=config["max_spread"],
+        min_category_n=min_category_n,
+    )
+    for e in entries:
+        e["full_sample"].pop("_tab", None)
+        if e["liquid_sample"] is not None:
+            e["liquid_sample"].pop("_tab", None)
+
+    qualifying = [e for e in entries if e["interpreted"]]
+
+    def _dispersion(key: str) -> dict | None:
+        """How much does calibration actually vary between categories?
+
+        A wide spread of skill scores means the aggregate number was hiding real
+        differences; a narrow one means the aggregate was a fair summary of all
+        of them.
+        """
+        vals = [e[key]["brier_skill_score"] for e in qualifying
+                if e[key] is not None and e[key]["brier_skill_score"] is not None]
+        if len(vals) < 2:
+            return None
+        return {
+            "min": round(min(vals), 4),
+            "max": round(max(vals), 4),
+            "range": round(max(vals) - min(vals), 4),
+        }
+
+    def _row(e: dict) -> dict:
+        full, liq = e["full_sample"], e["liquid_sample"]
+        low = full["longshot"]["low_prob_bins"]
+        high = full["longshot"]["high_prob_bins"]
+        low_l = liq["longshot"]["low_prob_bins"] if liq else None
+        high_l = liq["longshot"]["high_prob_bins"] if liq else None
+        return {
+            "category": e["category"],
+            "n": e["n_markets"],
+            "n_liquid": e["n_liquid"],
+            "liquid_pct": e["liquid_pct"],
+            "base_rate": round(full["base_rate"], 4),
+            "brier": full["brier"],
+            "baseline_brier": full["baseline_brier"],
+            "brier_skill_score": full["brier_skill_score"],
+            "log_loss": full["log_loss"],
+            "brier_liquid": liq["brier"] if liq else None,
+            "brier_skill_score_liquid": liq["brier_skill_score"] if liq else None,
+            # longshot deltas, full sample and liquid subsample, each with the
+            # z against the null that outcomes matched the priced probability
+            "delta_low_bins": low["delta"] if low else None,
+            "z_low_bins": low["z"] if low else None,
+            "n_low_bins": low["n"] if low else None,
+            "delta_high_bins": high["delta"] if high else None,
+            "z_high_bins": high["z"] if high else None,
+            "n_high_bins": high["n"] if high else None,
+            "delta_low_bins_liquid": low_l["delta"] if low_l else None,
+            "z_low_bins_liquid": low_l["z"] if low_l else None,
+            "delta_high_bins_liquid": high_l["delta"] if high_l else None,
+            "z_high_bins_liquid": high_l["z"] if high_l else None,
+            "interpreted": e["interpreted"],
+            "note": e["note"],
+        }
+
+    return {
+        "min_category_n": min_category_n,
+        "n_categories": len(entries),
+        "n_categories_qualifying": len(qualifying),
+        "qualifying_categories": [e["category"] for e in qualifying],
+        "insufficient_sample_categories": [
+            {"category": e["category"], "n": e["n_markets"]}
+            for e in entries if not e["interpreted"]
+        ],
+        "comparison": [_row(e) for e in entries],
+        "skill_dispersion_full": _dispersion("full_sample"),
+        "skill_dispersion_liquid": _dispersion("liquid_sample"),
+        "categories": entries,
     }

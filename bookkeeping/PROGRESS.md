@@ -11,31 +11,76 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 
 ---
 
-## ▶ Resume here — last updated 2026-08-23, end of Step 5
+## ▶ Resume here — last updated 2026-08-23, end of Step 7
 
-**Steps 0–5 complete. Next is Step 6 (calibration core).**
+**Steps 0–7 complete. Next is Step 8 (backtest with costs and slippage).**
 
 State on disk:
 
 | | |
 |---|---|
 | `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running |
-| Git | Step 4 committed (`1cb5a69`, unpushed). **Step 5 is staged but not committed** |
-| Suggested commit | `Step 5 of plan: Fetch price series and extract 24h horizon observation` |
+| `outputs/` | `calibration.png`, `calibration_by_category.png` |
+| Git | Steps 1–6 committed through `5296e92`, unpushed. **Step 7 is staged, not committed** |
+| Suggested commit | `Step 7 of plan: Per-category calibration breakdown` |
 | Credentials | Working. `.env` at repo root, key outside all repos in `../Kalshi backtester/key/` |
 
 Re-running `python run.py --ingest` is safe and idempotent but unnecessary —
 every write is an `INSERT OR REPLACE`, so it would simply rebuild the same rows.
+Analysis reads from SQLite and needs no API access at all. Note `run.py
+--analyze` is **still not wired up**; that is Step 9. Until then the analysis
+functions are called directly from Python.
 
-**Two live cautions carried into Step 6, both from Step 5's output:**
+### The four results that matter so far
 
-1. The bid-ask spread at the horizon averages **16.1 cents**. Any backtest edge
-   has to survive crossing that plus fees.
-2. Much of the sample is mutually exclusive buckets (one day's temperature split
-   ~6 ways, exactly one resolving YES by construction). The mid-range bins look
-   heavily overpriced, but part of that may be structural rather than a tradeable
-   inefficiency. The per-category breakdown in Step 7 is what separates the two —
-   do not claim longshot bias from the aggregate curve alone.
+**1. Headline calibration** (full sample, n=1,983): Brier **0.1558** vs baseline
+0.1937, log loss **0.4634** vs 0.5759, skill score **+0.196**, base rate 0.2627.
+
+**2. Liquidity is the dominant story.** 322 of 1,983 markets (16.2%) are empty
+books quoted around 0.045 / 0.906, mean spread **0.861**. Their midpoints land
+near 0.5 and faked a −0.23 mid-range mispricing. Split out:
+
+| Sample | n | Brier | Skill |
+|---|---|---|---|
+| Full | 1,983 | 0.1558 | +0.196 |
+| Liquid (spread ≤ 0.20) | 1,661 | 0.1416 | **+0.313** |
+| Illiquid (> 0.20) | 322 | 0.2289 | **−1.150** |
+
+Step 7 localized this: **7 of 12 series have zero illiquid markets**, and
+`KXARGNACBSPREAD` alone supplies 254 of the 322. It is a few nameable series
+with no order book, not a gradient across the exchange.
+
+**3. Longshot bias was NOT found**, in aggregate or in any single category. All
+eight tested deltas have |z| < 1.6. Consistent in *sign* at low probabilities
+(negative in all four categories) but ~1 percentage point in size — too small to
+trade and too small to claim. Reported as a negative result. See [`DECISIONS.md`
+D16, D18].
+
+**4. Calibration varies a lot by category** — skill from **−0.031** (Sports) to
+**+0.562** (Economics), a spread three times the aggregate figure. Sports is
+negative only because of the illiquid `KXARGNACBSPREAD` block; on liquid markets
+it is +0.224. See [`DECISIONS.md` D17].
+
+### Open question for Step 10, not yet decided
+
+Whether the README headlines the **full sample** or the **liquid subsample**.
+Recommendation on file: lead with the full sample and present the liquidity split
+as the finding. Brandon has not ruled. Does not block Steps 8–9.
+
+### Cautions carried forward
+
+1. Mean spread at the horizon is **16.1 cents** across the full sample (2.6
+   cents among liquid markets). Any backtest edge must survive crossing that plus
+   fees. Expect Step 8 to come back negative; that ships as-is.
+2. Step 8 selects its overpriced bins on **train data only**. With longshot bias
+   measured as absent, the honest expectation is that the strategy finds little
+   or nothing to trade. Do not widen the rule to manufacture trades.
+3. The `max_spread` filter was chosen **after** seeing results. Legitimate only
+   because the justification is outcome-independent, both samples are reported,
+   and it is a declared CONFIG value. All three must survive into the README.
+4. Weather is 45% of the sample and supplies **479 of the 721** low-probability
+   observations. No aggregate low-probability claim is really a claim about
+   "Kalshi" — it is mostly a claim about three cities' temperature markets.
 
 ---
 
@@ -50,7 +95,7 @@ every write is an `INSERT OR REPLACE`, so it would simply rebuild the same rows.
 | 4 | Series & market discovery ⟶ **checkpoint** | ✅ | "200+ resolved markets" |
 | 5 | Price-series fetch + full ingest run | ✅ | "price series", "200+ resolved markets" |
 | 6 | Calibration core | ✅ | "Brier score and log loss", "longshot bias" |
-| 7 | Per-category breakdown | ⬜ | "across event categories" |
+| 7 | Per-category breakdown | ✅ | "across event categories" |
 | 8 | Backtest: costs, slippage, drawdown | ⬜ | "costs and slippage", "Sharpe and drawdown" |
 | 9 | `run.py` CLI + `results.json` | ⬜ | — (makes everything reproducible) |
 | 10 | README + resume reconciliation + push | ⬜ | verifies **all** claims |
@@ -803,14 +848,161 @@ base-rate baseline so the numbers are interpretable.
 
 ---
 
-## Step 7 — Per-category breakdown ⬜
+## Step 7 — Per-category breakdown ✅
+*2026-08-23*
 
-For each category with ≥ 40 markets: its own Brier, log loss, N, binned table,
-and longshot delta, plus a comparison table sorted by Brier. Categories under
-threshold are reported **with their N and marked "insufficient sample"**, never
-silently dropped. Emits `outputs/calibration_by_category.png`.
+Runs the whole Step 6 question again separately inside each event category, to
+find out whether the single aggregate curve was a fair summary or was hiding
+categories that behave nothing like each other.
 
-Sole backing for "across event categories" (criterion 10 needs ≥ 3 qualifying).
+### Built
+
+`calibration_by_category(df, config)` in `analyze.py`, plus two supporting
+pieces:
+
+- `_cat_entry()` — scores one category on **both** samples (all its markets, and
+  its liquid subsample), keeping n, the liquid share, the series behind it, its
+  date range, and a per-category longshot summary.
+- `plot_category_calibration()` — a 2×2 grid of reliability diagrams,
+  `outputs/calibration_by_category.png`. Every panel shares identical axes on
+  purpose: the panels exist to be compared, and rescaling each to its own data
+  would make a category that only ever trades between 0.1 and 0.3 look like it
+  spans the whole range.
+
+Two changes were made to existing Step 6 code:
+
+1. The reliability-curve drawing was lifted out of `plot_calibration()` into a
+   module-level `_draw_reliability()`, so both charts share one code path
+   instead of drifting apart. **Verified no Step 6 number moved** — all ten
+   headline figures re-checked against the values recorded in this file.
+2. `longshot_summary()` now also reports `se_null`, `z`, and
+   `significant_5pct`. The standard error is taken **under the null hypothesis**
+   — that outcomes arrived at exactly the rate the market priced — so it is
+   computed from `mean_pred`, not from `realized`. This matters: the Economics
+   high-probability bins are 50 markets priced at 0.9536 that **all** resolved
+   YES, and a `realized`-based standard error is exactly zero there, which
+   reported a z of **10,375**. Under the correct null it is **1.56**, which is
+   not significant. That is the number that would have gone into the README.
+
+### The comparison — full sample, sorted by Brier
+
+All four categories clear `min_category_n = 40`, so **nothing was marked
+"insufficient sample"** and nothing was dropped. Criterion 10 needs ≥ 3
+qualifying; there are **4**.
+
+| Category | n | series | base rate | Brier | baseline | **skill** | log loss |
+|---|---|---|---|---|---|---|---|
+| Politics | 83 | 2 | 0.1446 | **0.0959** | 0.1237 | +0.224 | 0.3051 |
+| Economics | 192 | 4 | 0.5260 | **0.1091** | 0.2493 | **+0.562** | 0.3434 |
+| Climate and Weather | 895 | 3 | 0.2268 | **0.1362** | 0.1754 | +0.223 | 0.4059 |
+| Sports | 813 | 3 | 0.2522 | **0.1944** | 0.1886 | **−0.031** | 0.5711 |
+
+**The aggregate was not a fair summary.** Skill score ranges from **−0.031 to
++0.562** across categories — a spread of 0.593, three times the aggregate value
+of +0.196. Reporting only the headline number would have been the misleading
+choice.
+
+Note the Brier column and the skill column **disagree on the ranking**. Politics
+has the best raw Brier (0.0959) but only middling skill, because its base rate is
+0.1446 — a forecaster who blindly said "14.5%" every time would already score
+0.1237. Economics has a worse raw Brier and by far the best skill, because its
+base rate is 0.5260 and guessing is genuinely hard there. This is why the
+baseline column is not optional.
+
+### 🔴 Sports scores *worse than guessing* — and why
+
+Sports skill is **−0.031**: the market's own prices are less accurate than
+ignoring them and always saying "25.2%". That is the kind of result that should
+be checked before it is believed. It survives checking, and the cause is
+specific.
+
+Splitting each category by liquidity:
+
+| Category | liquid n | Brier | skill | illiquid n | Brier | skill |
+|---|---|---|---|---|---|---|
+| Politics | 70 (84%) | 0.0712 | +0.419 | 13 | 0.2292 | −0.761 |
+| Economics | 137 (71%) | 0.0711 | **+0.714** | 55 | 0.2039 | +0.184 |
+| Climate and Weather | 895 (**100%**) | 0.1362 | +0.223 | **0** | — | — |
+| Sports | 559 (69%) | 0.1763 | +0.224 | 254 | 0.2342 | **−5.193** |
+
+On liquid markets only, Sports is **+0.224** — right in line with Weather. The
+entire negative result is the 254 illiquid markets, and those are not scattered:
+
+**All 254 come from a single series, `KXARGNACBSPREAD`** (Argentine football
+spreads), 254 of its 356 markets. Their average quote is **bid 0.016 / ask
+0.913** — a midpoint of 0.465 on markets that resolve YES **3.9%** of the time.
+Nobody was quoting these; the midpoint is an arithmetic artifact of two lonely
+orders, and treating it as a probability is what produces a skill score of −5.2.
+
+Illiquidity by series, to show how concentrated it is:
+
+| Series | n | illiquid | share |
+|---|---|---|---|
+| `KXARGNACBSPREAD` | 356 | 254 | **71.3%** |
+| `KXUE` | 102 | 43 | 42.2% |
+| `KXAPRPOTUSD` | 51 | 13 | 25.5% |
+| `KXFEDTWEETS` | 42 | 10 | 23.8% |
+| `KXAAAGASM` | 11 | 2 | 18.2% |
+| the other **7 series** | 1,421 | **0** | 0% |
+
+Seven of twelve series have no illiquid markets at all. This retroactively
+strengthens the Step 6 liquidity split ([`DECISIONS.md` D15]): it is not a
+gradual quality gradient across the exchange, it is a handful of specific,
+nameable series with no order book.
+
+### Longshot bias, per category: still not found
+
+`delta = realized − mean_pred`, with the z-score under the null that outcomes
+matched the priced rate. Liquid subsample:
+
+| Category | side | n | delta | z | significant at 5%? |
+|---|---|---|---|---|---|
+| Politics | p ≤ 0.3 | 46 | −0.0154 | −0.55 | no |
+| Economics | p ≤ 0.3 | 31 | −0.0198 | −0.50 | no |
+| Economics | p ≥ 0.7 | 50 | +0.0464 | +1.56 | no |
+| Climate and Weather | p ≤ 0.3 | 479 | −0.0136 | −1.22 | no |
+| Sports | p ≤ 0.3 | 137 | −0.0025 | −0.09 | no |
+| Sports | p ≥ 0.7 | 50 | −0.0124 | −0.28 | no |
+| **aggregate** | p ≤ 0.3 | 721 | −0.0127 | −1.29 | no |
+| **aggregate** | p ≥ 0.7 | 150 | +0.0197 | +0.74 | no |
+
+**Not one delta reaches significance in any category, on either sample.** Every
+|z| is below 1.6.
+
+The one thing worth saying: the low-probability delta is **negative in all four
+categories** on the liquid subsample, which is the direction longshot bias
+predicts. Four out of four agreeing in sign is mildly suggestive. But the
+magnitudes are all ~1–2 percentage points and each is individually inside the
+noise, so this is reported as *directionally consistent, statistically absent* —
+not as a finding. It reinforces [`DECISIONS.md` D16] rather than overturning it.
+
+### Weather: the structural caution, checked
+
+The caution carried in from Step 6 was that Weather (895 markets, 45% of the
+sample) is ~6 mutually exclusive buckets per day with exactly one resolving YES,
+so its low-probability concentration is structural rather than evidence of
+anything. Confirmed: Weather's base rate is **0.2268**, close to the 1/6 ≈ 0.167
+the structure implies, and 479 of its markets sit in the p ≤ 0.3 bins.
+
+The important consequence: Weather contributes **479 of the 721** markets in the
+aggregate low-probability bins. Any aggregate longshot claim would have been
+mostly a claim about three cities' temperature markets wearing a general label.
+Splitting by category is what makes that visible, which is precisely what this
+step existed to do.
+
+### Output
+
+`outputs/calibration_by_category.png` — 2×2 grid, 150 dpi. Each panel plots the
+category's full sample (red) and liquid subsample (blue) over the diagonal, with
+binomial error bars; bins under n = 20 are drawn hollow and faded rather than
+omitted, so a thinly sampled tail reads as thin rather than as absent. Panel
+titles carry Brier, the base-rate baseline, and the liquid share. Any category
+below `min_category_n` would additionally get a red panel border and a "not
+interpreted" flag in its title — none did here.
+
+The Sports panel is the one to look at: the red points at 0.45–0.55 sit far below
+the diagonal while the blue points track it closely. That gap is the empty books,
+drawn.
 
 ---
 

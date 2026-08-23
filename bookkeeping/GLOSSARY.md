@@ -251,6 +251,22 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 
 **Mutually exclusive buckets** — several markets covering one event, of which exactly one can resolve YES. Each day's temperature is split into ~6 ranges, so the weather sample has a **structural base rate of 1/6 ≈ 0.167** and is concentrated at low probabilities by construction, not by chance.
 
+**Aggregation effect** — when a single overall number hides groups that behave nothing like each other. Measured here directly: the aggregate skill score is +0.196, but per category it runs from **−0.031 to +0.562**. The aggregate is not wrong, it is just not a description of any actual category.
+
+**Skill dispersion** — the spread (min, max, range) of the Brier skill score across categories. Reported deliberately: a narrow range would mean the headline number was a fair summary; the observed range of **0.593** means it was not.
+
+**Null hypothesis** — the boring explanation a result has to beat. Here: "outcomes arrived at exactly the rate the market priced them." A delta is only worth mentioning if it is too large to be chance under that assumption.
+
+**Standard error under the null** — `sqrt(p̂(1−p̂)/n)` computed from the **predicted** probability, not the realized one. Using the realized rate breaks whenever every market in a group resolved the same way: 50 markets priced at 0.95 that all settled YES have a realized standard error of exactly zero, which reported a z of 10,375 instead of the correct **1.56**.
+
+**Statistical significance (5% level)** — the conventional bar, `|z| ≥ 1.96`, meaning a result this large would turn up by chance less than one time in twenty. **No longshot delta in this project clears it**, in aggregate or in any category.
+
+**Directionally consistent, statistically absent** — the honest label for the low-probability deltas: negative in all four categories, which is the direction longshot bias predicts, but each ~1 percentage point and individually inside the noise. Reported as a shape in the data, never as a finding.
+
+**`min_category_n`** — the minimum markets (**40**) a category needs before its numbers are interpreted. Categories below it are still scored and still printed, tagged **"insufficient sample"** with their n, and given a red panel border on the chart. Dropping them would leave a reader unable to tell a category that was absent from one that was inconvenient. Nothing hit this threshold: all four categories cleared it.
+
+**Category vs series** — a **category** is Kalshi's own label ("Sports", "Economics"); a **series** is one recurring question inside it (`KXARGNACBSPREAD`). The resume says "across event categories", so categories are the reporting unit — but the diagnosis usually lives at series level, as when one series supplied **all 254** illiquid Sports markets.
+
 ---
 
 ## 7. Backtesting

@@ -366,3 +366,79 @@ comes out.
 What replaced it is a larger and better-evidenced effect: liquidity, where the
 gap between the liquid and illiquid subsamples is roughly twenty times the size
 of the tail deltas.
+
+
+---
+
+## D17 — Report Sports' negative skill score rather than quietly excluding the series
+
+**Step 7.** Sports came back with a Brier skill score of **−0.031**: on the full
+sample, the market's own prices are worse than ignoring them and always guessing
+the 25.2% base rate. That is an embarrassing-looking number sitting in a project
+whose headline is "markets are well calibrated."
+
+The cause is specific and was traced before anything was written down. All 254
+illiquid Sports markets come from **one series**, `KXARGNACBSPREAD`, quoted on
+average bid 0.016 / ask 0.913 on markets that resolve YES 3.9% of the time. On
+Sports' liquid markets the skill score is **+0.224**, in line with Weather.
+
+**The option not taken:** drop `KXARGNACBSPREAD` from the sample. It has a real
+justification — 71% of its markets have no order book — and the aggregate numbers
+would all improve.
+
+**Why not:** the series was pinned in Step 4 *before any prices were fetched*,
+precisely so the sample could not be selected on the result. Removing it now,
+after seeing that it hurts, is exactly the move that discipline exists to
+prevent, and no post-hoc justification changes the order the decisions happened
+in. It also throws away the most interesting thing in the data.
+
+**What is done instead:** the negative number is reported as the headline for
+Sports, immediately next to the liquid split that explains it, and next to the
+series-level table showing 7 of 12 series have zero illiquid markets. The
+explanation is falsifiable and a reader can check it. A quietly smaller sample
+would not have been.
+
+---
+
+## D18 — Compute the longshot z-score under the null, not from the realized rate
+
+**Step 7.** `longshot_summary()` originally reported a delta with no measure of
+whether it could be noise. Adding one exposed a trap.
+
+The obvious standard error is `sqrt(realized(1−realized)/n)`. It divides by zero
+whenever every market in a group resolved the same way — which is common in the
+tails and happened here: the Economics high-probability bins are **50 markets
+priced at 0.9536 that all settled YES**. That formula reported **z = 10,375**,
+i.e. "overwhelmingly significant," for a delta of 4.6 percentage points on 50
+observations.
+
+The correct standard error comes from the null hypothesis being tested —
+"outcomes arrived at the rate the market priced" — so it uses `mean_pred`:
+`sqrt(0.9536 × 0.0464 / 50) = 0.0298`, giving **z = 1.56**, not significant.
+
+**Why this is recorded as a decision and not a bug fix:** the wrong version
+produces a spectacular, quotable, completely false number, and it produces it
+*silently* — there is no crash, no warning, just a very large z. It would have
+gone into the README as the project's flagship finding. Every scoring group now
+reports `se_null`, `z`, and `significant_5pct` together, so a delta can never
+appear without its uncertainty attached.
+
+---
+
+## D19 — Refactor the Step 6 plot rather than duplicating the drawing code
+
+**Step 7.** The category chart needed the same reliability curve the Step 6 chart
+draws. Two options: copy the twelve lines, or lift them into a shared
+`_draw_reliability()` and change working, already-committed code.
+
+Copying is safer in the moment and worse afterwards — the two charts would drift,
+and a repo meant to be read by someone deciding whether to interview is a bad
+place for near-duplicate plotting logic.
+
+The refactor was taken, with a guard: all ten Step 6 headline figures were
+re-computed afterwards and checked against the values recorded in `PROGRESS.md`
+(n, Brier, log loss, baseline, skill, and the same five for the liquid and
+illiquid subsamples). **All ten unchanged.** The rule being followed is that
+touching committed analysis code is fine as long as the old numbers are
+reproduced and the check is written down — not that committed code is untouchable.
+
