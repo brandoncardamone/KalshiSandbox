@@ -41,6 +41,17 @@ CONFIG = {
     ],
     "n_bins":            10,          # calibration bins
     "min_bin_n":         20,          # bins below this are reported but not interpreted
+
+    # Widest bid-ask spread at the horizon for a market to count as having a
+    # genuine two-sided quote. Added after the step-6 run, on inspection of the
+    # data rather than a priori: 16% of priced markets turned out to be quoted
+    # around 0.045 / 0.906 -- an empty book whose midpoint carries no
+    # information. The spread distribution is starkly bimodal (1,649 markets at
+    # or below 0.10, then a separate cluster of 322 averaging 0.861), so this
+    # reads a real gap rather than slicing a continuum.
+    # Nothing is dropped: full-sample and liquid-subsample results are both
+    # computed and both reported.
+    "max_spread":        0.20,
     "min_category_n":    40,          # categories below this are not interpreted
     "train_frac":        0.6,         # time-ordered train/test split for backtest
     "slippage_cents":    1.0,         # adverse execution assumption, on top of spread

@@ -291,3 +291,78 @@ the problem.
 result, then revising the series would be selecting on the outcome — the same
 error as tuning the backtest threshold against the test set, and just as fatal to
 the result's credibility.
+
+---
+
+## D15 — Split the sample by liquidity, and report both halves
+*Step 6*
+
+**Chose:** compute and report calibration on the full sample **and** on the
+subsample with a bid-ask spread at or below 0.20, and plot both on the same
+reliability diagram.
+
+**Rejected:** (a) reporting only the full sample, (b) silently filtering out the
+illiquid markets and reporting the better number.
+
+**Why:** 322 of 1,983 priced markets (16.2%) are quoted around 0.045 / 0.906 --
+an average spread of 0.861. That is not a wide market, it is an empty book with
+two token orders near the extremes. Its midpoint lands near 0.5 arithmetically
+while carrying no information at all, and because it lands near 0.5, all of those
+markets pile into the middle bins.
+
+The visible consequence was a mid-range delta of about -0.23 in bins 0.4-0.6,
+which read as "the market massively overprices coin-flip events." That claim
+would have been wrong, and it is exactly the sort of thing an interviewer would
+probe.
+
+The ingest's rejection rules could not have caught it: they reject a bid of 0 or
+an ask of 1, and 0.045 / 0.906 passes all of them.
+
+**Why 0.20 is defensible.** The spread distribution is starkly bimodal -- 1,461
+markets at or below 0.05, 167 more below 0.10, 33 between 0.10 and 0.20, then a
+separate cluster of 322 averaging 0.861. The threshold sits in a genuine gap, and
+anything from roughly 0.15 to 0.25 gives the same split.
+
+**The honesty requirement, stated plainly.** This filter was chosen **after**
+seeing the results, which is ordinarily how a result gets fitted to a hypothesis.
+Three things keep it legitimate, and all three must survive into the README:
+
+1. The justification is a priori and independent of the outcome -- a spread of
+   86 cents contains no probability information regardless of what it would do
+   to the numbers.
+2. **Both** sets of numbers are computed, stored in results.json, and plotted.
+   Nothing is hidden, and a reader can disagree with the cut and still see the
+   full-sample result.
+3. The threshold is a declared CONFIG value with its reasoning recorded, not a
+   quiet inline condition.
+
+The distinction from illegitimate filtering: this removes observations that carry
+no information, not observations that disagree with a preferred conclusion. The
+liquid subsample is not the more flattering one in every respect either -- it has
+a *higher* baseline Brier, so beating the baseline is a harder test there.
+
+---
+
+## D16 — Report the absence of longshot bias as the finding
+*Step 6*
+
+**Chose:** report that longshot bias was **not** found at any meaningful
+magnitude, and lead the analysis with the liquidity effect instead.
+
+**Rejected:** framing the ~1 percentage point tail deltas as evidence of longshot
+bias because the signs happen to point the expected way.
+
+**Why:** in the liquid subsample, low-probability markets (p <= 0.3, n=721) came
+in at 0.0624 realized against 0.0751 predicted -- a delta of -0.0127. High
+probability markets (p >= 0.7, n=150) ran +0.0197. Both point the direction the
+longshot literature predicts, and both are about one percentage point.
+
+At that magnitude it is not tradeable through a two-cent spread, let alone a
+sixteen-cent one, and calling it a finding would be reading signal into noise.
+The project overview anticipated exactly this: "a negative result is publishable,"
+and the calibration measurement is the deliverable regardless of which way it
+comes out.
+
+What replaced it is a larger and better-evidenced effect: liquidity, where the
+gap between the liquid and illiquid subsamples is roughly twenty times the size
+of the tail deltas.

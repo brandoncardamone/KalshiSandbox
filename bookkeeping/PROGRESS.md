@@ -49,7 +49,7 @@ every write is an `INSERT OR REPLACE`, so it would simply rebuild the same rows.
 | 3 | SQLite schema & persistence | ✅ | "queryable SQLite store", "price series" |
 | 4 | Series & market discovery ⟶ **checkpoint** | ✅ | "200+ resolved markets" |
 | 5 | Price-series fetch + full ingest run | ✅ | "price series", "200+ resolved markets" |
-| 6 | Calibration core | ⬜ | "Brier score and log loss", "longshot bias" |
+| 6 | Calibration core | ✅ | "Brier score and log loss", "longshot bias" |
 | 7 | Per-category breakdown | ⬜ | "across event categories" |
 | 8 | Backtest: costs, slippage, drawdown | ⬜ | "costs and slippage", "Sharpe and drawdown" |
 | 9 | `run.py` CLI + `results.json` | ⬜ | — (makes everything reproducible) |
@@ -672,7 +672,125 @@ Rejects tallied by reason. Expect 20–40% attrition, so over-fetch.
 
 ---
 
-## Step 6 — Calibration core ⬜
+## Step 6 — Calibration core ✅
+*2026-08-23*
+
+**Verdict: works, 14/14 unit checks pass — and it surfaced a data-quality problem
+that changes what the headline result means.**
+
+### Built
+
+`analyze.py`: `load_frame()`, `brier()`, `log_loss()`, `baseline_scores()`,
+`calibration_table()`, `longshot_summary()`, `plot_calibration()`,
+`run_calibration()`, plus `split_by_liquidity()` (added mid-step, see below).
+
+Verified against known values before touching real data: perfect forecast → Brier
+0, always-50% → 0.25, worst possible → 1.0; log loss of always-50% → ln 2, and
+confident-but-wrong → 4.61 while Brier gives it 0.98, confirming log loss
+punishes confident error far harder. Clipping prevents infinities. **End-to-end
+check:** 40,000 synthetic perfectly-calibrated forecasts trace the diagonal with
+max |delta| = 0.0128.
+
+### Headline results, full sample (n = 1,983)
+
+| Metric | Value | Baseline (always predict base rate) |
+|---|---|---|
+| Brier | **0.1558** | 0.1937 |
+| Log loss | **0.4634** | 0.5759 |
+| Brier skill score | **+0.196** | 0 by construction |
+| Base rate (YES) | 0.2627 | |
+
+### 🔴 The mid-range anomaly, and what it actually was
+
+The first run showed a large deviation **in the middle of the curve, not the
+tails** — the opposite of the expected longshot bias:
+
+```
+0.4-0.5   n=282  pred 0.465  realized 0.238   delta -0.2275
+0.5-0.6   n=261  pred 0.526  realized 0.299   delta -0.2266
+```
+
+That is a big claim if taken at face value: *the market massively overprices
+coin-flip events.* It is also wrong.
+
+Checking the spread inside those bins:
+
+```
+0.4-0.5   mean spread 0.464   (bid 0.233  ask 0.697)
+0.5-0.6   mean spread 0.499   (bid 0.276  ask 0.774)
+```
+
+Those are not wide markets. They are **empty books**. Across the whole sample,
+322 markets (16.2%) have a mean spread of **0.861**, quoted around
+**0.045 / 0.906** — two token orders sitting near the extremes with nothing in
+between. Their midpoint lands near 0.5 arithmetically while carrying no
+information whatsoever, which is precisely why they flooded the middle bins.
+
+The spread distribution is starkly bimodal, so this is a real gap in the data
+rather than a continuum sliced at a convenient point:
+
+```
+spread <= 0.05  : 1461
+0.05 - 0.10     :  167
+0.10 - 0.20     :   33
+> 0.20          :  322   <- mean spread 0.861
+```
+
+**The ingest's existing rejection rules could not catch this.** They reject a bid
+of 0 or an ask of 1; a quote of 0.045 / 0.906 passes every one of them.
+
+### Results split by liquidity
+
+| Sample | n | Brier | Baseline | Skill | Log loss | Mean spread |
+|---|---|---|---|---|---|---|
+| Full | 1,983 | 0.1558 | 0.1937 | +0.196 | 0.4634 | 0.161 |
+| **Liquid (spread ≤ 0.20)** | **1,661** | **0.1416** | 0.2060 | **+0.313** | **0.4273** | **0.026** |
+| Illiquid (> 0.20) | 322 | 0.2289 | 0.1064 | **−1.150** | 0.6495 | 0.861 |
+
+The illiquid subsample scores a **negative** skill score — its prices are
+materially *worse* than simply guessing the base rate, which is what one should
+expect from a midpoint computed over an empty book.
+
+On the liquid subsample the anomaly largely disappears and the curve tracks the
+diagonal:
+
+```
+0.0-0.1  n=497  pred 0.0434  real 0.0322  -0.0112
+0.1-0.2  n=224  pred 0.1455  real 0.1295  -0.0160
+0.2-0.3  n=260  pred 0.2495  real 0.3038  +0.0543
+0.3-0.4  n=200  pred 0.3392  real 0.3550  +0.0158
+0.4-0.5  n=144  pred 0.4496  real 0.4167  -0.0329
+0.5-0.6  n=127  pred 0.5469  real 0.4961  -0.0508
+0.6-0.7  n= 59  pred 0.6395  real 0.4915  -0.1480
+0.7-0.8  n= 31  pred 0.7505  real 0.7742  +0.0237
+0.8-0.9  n= 37  pred 0.8359  real 0.8378  +0.0019
+0.9-1.0  n= 82  pred 0.9494  real 0.9756  +0.0262
+```
+
+### Longshot bias: not found
+
+This is a negative result and it is reported as one.
+
+| Region | n | mean predicted | realized | delta |
+|---|---|---|---|---|
+| Low, p ≤ 0.3 (liquid) | 721 | 0.0751 | 0.0624 | **−0.0127** |
+| High, p ≥ 0.7 (liquid) | 150 | 0.8803 | 0.9000 | **+0.0197** |
+
+The signs are in the direction longshot bias predicts — unlikely things slightly
+overpriced, likely things slightly underpriced — but the magnitude is around one
+percentage point. That is far too small to trade through a spread, and small
+enough that it should not be described as a meaningful finding.
+
+**The genuine finding is the liquidity effect, which is roughly twenty times
+larger than the longshot effect.** Where a real two-sided market exists, Kalshi
+is well calibrated. Where it does not, the midpoint is not a probability.
+
+### Output
+
+`outputs/calibration.png` — reliability diagram plotting **both** samples over the
+shared diagonal, with error bars and per-point n annotations. Showing both is the
+point: the gap between the red and blue lines is the finding, and plotting either
+one alone would misrepresent it in one direction or the other.
 
 `brier()`, `log_loss()` (clipped to 1e-6), `calibration_table()` with 10
 equal-width bins returning `mean_pred / realized / n / se`, and

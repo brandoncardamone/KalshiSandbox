@@ -314,3 +314,13 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 **Dangling / unreachable objects** — saved content no longer referenced by any branch. Checked with `git fsck` before deleting a repo, since it's the one place orphaned work could hide.
 
 **Working tree** — the actual files on disk, as opposed to the stored history.
+
+**Brier skill score** — `1 − (brier / baseline_brier)`. Turns a raw Brier score into "how much better than the naive base-rate forecast is this?" **1 is perfect, 0 is no better than the baseline, and negative is worse than the baseline.** Measured here: +0.196 on the full sample, +0.313 on the liquid subsample, and **−1.150** on the illiquid one — prices from an empty book are materially worse than simply guessing the base rate.
+
+**Empty book** — a market where nobody is meaningfully quoting either side. Observed here as quotes around **0.045 / 0.906**: two token orders near the extremes with nothing between them. The midpoint lands near 0.5 arithmetically while carrying no information, which is why these markets flooded the middle bins and faked a large mid-range mispricing. Distinct from `quote_out_of_range`, which the ingest already rejects — an empty book passes every one of those checks.
+
+**Bimodal distribution** — one with two separate humps rather than a single spread-out mass. The spread distribution here is bimodal (1,461 markets at or below 0.05, then a separate cluster of 322 averaging 0.861), which is what makes a threshold at 0.20 defensible: it reads a real gap in the data rather than slicing a continuum at a convenient point.
+
+**Data-quality filter vs. result-fitting** — the distinction that keeps the liquidity cut honest. Removing observations that carry *no information* is data quality; removing observations that *disagree with a preferred conclusion* is fitting the result. The test is whether the justification would still hold if it made the numbers worse. Here it would: an 86-cent spread contains no probability information regardless of which way the result moved.
+
+**Negative result** — a finding that the expected effect isn't there. Longshot bias came in at roughly one percentage point, which is real in sign but far too small to trade through a spread. Reported as absent rather than dressed up, because a measurement that says "no" is still a measurement.
