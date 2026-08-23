@@ -19,7 +19,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 | 1 | Repo scaffold & secrets hygiene | ✅ | — |
 | 2 | `client.py` + connectivity smoke test | ✅ | "asynchronous data pipeline" |
 | 3 | SQLite schema & persistence | ✅ | "queryable SQLite store", "price series" |
-| 4 | Series & market discovery ⟶ **checkpoint** | ⬜ | "200+ resolved markets" |
+| 4 | Series & market discovery ⟶ **checkpoint** | ✅ | "200+ resolved markets" |
 | 5 | Price-series fetch + full ingest run | ⬜ | "price series", "200+ resolved markets" |
 | 6 | Calibration core | ⬜ | "Brier score and log loss", "longshot bias" |
 | 7 | Per-category breakdown | ⬜ | "across event categories" |
@@ -377,7 +377,117 @@ would miss `-wal` and `-shm` if SQLite's journal mode ever changes. Broadened to
 
 ---
 
-## Step 4 — Discovery ⟶ checkpoint ⬜
+## Step 4 — Discovery ⟶ checkpoint ✅
+*2026-08-23*
+
+**Verdict: works. 12 series pinned, 4 categories, 2,703 markets discovered
+against a target of 250.**
+
+### Built
+
+Added to `ingest.py`: `get_cutoff_ts()`, `discover_series()`,
+`normalize_market()`, `discover_markets()`. Category and `series_ticker` are both
+stamped onto every market from the series that produced it, since the market
+object carries neither. Markets whose `result` is not exactly `'yes'` or `'no'`
+are dropped at normalization.
+
+### Survey — phase 1 screen, phase 2 exact counts
+
+8,277 requests over 8m50s covering 8 categories. Full results in
+`survey_results.json` (scratchpad, not committed).
+
+| Category | Best series | Markets |
+|---|---|---|
+| Climate and Weather | 6 × `KXHIGH*` cities, 408 each | 2,448 |
+| Economics | `KXAAAGASD` 1,201, `KXTSAW` 190, `KXUE` 151 | 1,768 |
+| Sports | `KXARGNACBSPREAD` 371, `KXALLSVENSKANTOTAL` 295 | 1,575 |
+| Politics | `KXTRUMPENDORSEMENTS` 70, `KXAPRPOTUSD` 54 | 226 |
+| Science and Technology | `KXLLM1` 88, `KXTOPMODEL` 84 | 388 |
+| Financials | `KXNASDAQ100U` 112,920, `KXDJI` 13,060 | 133,039 |
+| Crypto | `KXBTCD` 291,438, `KXBTC` 291,008 | 828,993 |
+| Companies | `KXCOMPANYLAYOFF` 2 | 2 — **insufficient** |
+
+### 🔴 Raw counts are deeply misleading — the viability probe
+
+Market count is not sample size. A market that lives 15 minutes has **no price
+24 hours before it settles**, so it contributes nothing. Sampling 25 markets per
+series and applying step 5's exact acceptance conditions:
+
+| Category | Usable at 24 h | Why the failures |
+|---|---|---|
+| Sports | **81%** | some markets open <24 h before kickoff |
+| Climate and Weather | **76%** | one-sided book at the horizon |
+| Politics | 60% | very mixed by series |
+| Economics | 41% | very mixed by series |
+| Science and Technology | 13% | one-sided book — longshot markets pinned at 0 or 1 |
+| Financials | **0%** | markets live 18–23 h; nothing exists at the horizon |
+
+**Crypto and Financials — the two largest categories by an enormous margin — are
+worthless here.** `KXBTCD`'s 291,438 markets and `KXNASDAQ100U`'s 112,920 are
+hourly and 15-minute contracts. Median observed lifetime 0–23 hours. Every single
+sampled market failed with `none_at_horizon`.
+
+Had the series list been chosen on market count alone, the run would have spent
+hours fetching hundreds of thousands of markets and produced **zero usable
+observations**.
+
+Two distinct failure modes, worth separating:
+
+- **`none_at_horizon`** — the market did not exist 24 h before settling. Purely
+  structural: short-dated contracts.
+- **`quote_out_of_range`** — a candle exists, but bid or ask sits exactly at 0 or
+  1: a one-sided book with no real two-sided quote. Dominates the longshot
+  series (`KXLLM1` 25/25, `KXTECHRANKLISTAICODE` 23/25).
+
+Within-category variation is larger than between-category variation, so series
+must be picked individually, not by taking a category wholesale. Economics ranges
+from `KXAAAGASD` at 12% to `KXFEDTWEETS` at 76%.
+
+### Also learned
+
+**Rate limiting is real and the backoff handles it.** 695 of 8,277 requests
+(8.4%) came back `429`; every one succeeded after exponential backoff, with zero
+failures. The client's retry policy is not decorative — it is the difference
+between the survey completing and dying a third of the way through.
+
+**Weather's base rate is structural.** All six `KXHIGH*` series show a YES rate of
+exactly 0.167 — each day offers ~6 mutually exclusive temperature buckets and
+exactly one resolves YES. Worth remembering when reading the calibration curve:
+the weather sample is inherently concentrated at low probabilities.
+
+### Pinned — the "balanced, 4 categories" option
+
+Chosen for a sample where no single category dominates the aggregate (weather is
+~46%, against ~64% if all six cities were taken). Written into
+`CONFIG["series_tickers"]` **before any prices were fetched**, so the sample
+cannot have been selected on the result.
+
+| Category | Series | Discovered |
+|---|---|---|
+| Climate and Weather | `KXHIGHNY`, `KXHIGHCHI`, `KXHIGHMIA` | 1,224 |
+| Sports | `KXARGNACBSPREAD`, `KXALLSVENSKANTOTAL`, `KXBRASILEIROBGAME` | 915 |
+| Economics | `KXTSAW`, `KXUE`, `KXAAAGASM`, `KXFEDTWEETS` | 464 |
+| Politics | `KXAPRPOTUSD`, `KXACTBLUETOP` | 100 |
+| | **total** | **2,703** |
+
+Expected ~2,000 usable after the measured attrition, against `target_markets`
+of 250 and an acceptance floor of 200.
+
+### Verified
+
+| Check | Result |
+|---|---|
+| All 12 pinned tickers resolve in `/series` | ✅ none missing |
+| Distinct categories ≥ 3 | ✅ **4** |
+| Every category ≥ `min_category_n` (40) | ✅ lowest is Politics at 100 |
+| Total ≥ `target_markets` (250) | ✅ **2,703** |
+| Date range | 2026-06-17 .. 2026-08-23 |
+| Outcome variation within each series | ✅ YES rates 0.100 – 0.863, so no series is degenerate |
+
+The per-series YES rates span 0.100 to 0.863, which matters: a series where
+almost everything resolves the same way contributes little to a calibration
+curve. This spread means the sample covers a real range of probabilities rather
+than piling up at one end.
 
 `discover_series()` across categories, then `discover_markets()` paging
 `/markets?series_ticker=…&status=settled` per chosen series.

@@ -17,7 +17,28 @@ CONFIG = {
     "horizon_sec":       24 * 3600,   # read implied prob this far before settlement
     "series_lookback_d": 7,           # days of hourly candles stored per market
     "target_markets":    250,         # minimum settled markets to collect
-    "series_tickers":    [],          # filled after discovery; >=3 distinct categories
+
+    # Pinned 2026-08-23 from the step-4 discovery survey, BEFORE any prices were
+    # fetched, so the sample cannot be selected on the result. Four categories,
+    # each well clear of min_category_n.
+    #
+    # Chosen on measured 24h-horizon viability, not on market count. Crypto and
+    # Financials are excluded despite being by far the largest categories
+    # (KXBTCD alone has 291,438 settled markets) because those contracts are
+    # hourly or 15-minute: they do not exist 24 hours before they settle, and
+    # 0% of sampled markets yielded a usable quote at the horizon.
+    "series_tickers": [
+        # Climate and Weather -- daily city high temperature, ~76% usable.
+        # NB structural base rate: ~6 mutually exclusive buckets per day, so
+        # exactly one resolves YES and the sample skews to low probabilities.
+        "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA",
+        # Sports -- soccer totals and spreads, ~81-100% usable
+        "KXBRASILEIROBGAME", "KXARGNACBSPREAD", "KXALLSVENSKANTOTAL",
+        # Economics -- unemployment, Fed activity, TSA throughput, gas prices
+        "KXUE", "KXFEDTWEETS", "KXTSAW", "KXAAAGASM",
+        # Politics -- approval rating and fundraising
+        "KXAPRPOTUSD", "KXACTBLUETOP",
+    ],
     "n_bins":            10,          # calibration bins
     "min_bin_n":         20,          # bins below this are reported but not interpreted
     "min_category_n":    40,          # categories below this are not interpreted

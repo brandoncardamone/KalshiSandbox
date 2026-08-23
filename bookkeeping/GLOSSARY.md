@@ -233,6 +233,20 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 
 **Delta** — `realized − predicted`. **Negative delta at low probabilities is longshot bias**: things happened less often than priced.
 
+**Sampling frame** — the set of things you actually study, as opposed to the set you want to draw conclusions about. Here the frame is a handful of chosen series; the target is "Kalshi." The gap between them is why the README says *these series* rather than *the exchange*.
+
+**Selection bias** — when the way you chose your sample bends the answer. The specific trap in this project: picking series, seeing the calibration result, then changing the series because the result looked wrong. Pinning the list **before** any prices are fetched is what prevents it — the same discipline as choosing backtest bins on training data only.
+
+**Attrition** — sample lost to filtering. Here, settled markets that end up unusable because no valid price exists at the 24-hour horizon. Expected at 20–40%; measured per series before committing, and tallied by reason during ingest.
+
+**`none_at_horizon`** — attrition reason: the market did not exist 24 hours before it settled. Structural, and fatal for short-dated contracts. Financials and crypto markets live 0–23 hours, so **100%** of them fail this way.
+
+**One-sided book / `quote_out_of_range`** — attrition reason: a price exists but bid or ask sits exactly at 0 or 1, meaning nobody is quoting one side. There is no real two-sided market to take a midpoint of. Dominates longshot series — `KXLLM1` failed 25 of 25 sampled markets this way.
+
+**Market lifetime** — how long a contract trades before settling. Must exceed the horizon or the market cannot contribute an observation. Weather markets live ~40 h, soccer ~24–167 h, index and crypto markets 0–23 h.
+
+**Mutually exclusive buckets** — several markets covering one event, of which exactly one can resolve YES. Each day's temperature is split into ~6 ranges, so the weather sample has a **structural base rate of 1/6 ≈ 0.167** and is concentrated at low probabilities by construction, not by chance.
+
 ---
 
 ## 7. Backtesting

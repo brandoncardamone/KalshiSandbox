@@ -4,8 +4,9 @@ This module is built in stages. Currently implemented:
 
   * value normalization (`_num`, `to_unix`)   -- the parsing primitives
   * schema and persistence                    -- `init_db`, `upsert_market`, ...
+  * discovery                                 -- `discover_series`, `discover_markets`
 
-Discovery and price-series fetching land in later steps.
+Price-series fetching lands in the next step.
 
 On the two tables: `markets` holds one row per market, `candles` holds one row
 per market per hour. Splitting them avoids repeating a market's title, category
@@ -181,6 +182,106 @@ def upsert_candles(
         rows,
     )
     return len(rows)
+
+
+# --------------------------------------------------------------------------
+# Discovery
+# --------------------------------------------------------------------------
+
+
+async def get_cutoff_ts(client) -> int:
+    """Unix seconds for market_settled_ts from GET /historical/cutoff.
+
+    Used for provenance only. The historical candlestick endpoint returns no
+    data (verified in step 2), so ingest sources everything from the live
+    endpoints; the cutoff just records which side of the line a market sits on.
+    """
+    cutoff = await client.get("/historical/cutoff")
+    return to_unix(cutoff.get("market_settled_ts"))
+
+
+async def discover_series(client, categories: list[str] | None = None) -> list[dict]:
+    """Return [{'series_ticker', 'category', 'title'}] for every series.
+
+    GET /series returns all ~13k series in a single unpaginated response, and
+    -- unlike the market object -- it does carry `category`. That is the whole
+    reason discovery is series-first: category has to be captured here and
+    stamped onto every market found beneath the series, or the per-category
+    calibration breakdown has nothing to group by.
+    """
+    page = await client.get("/series")
+    out = []
+    for s in page.get("series") or []:
+        cat = s.get("category")
+        if categories and cat not in categories:
+            continue
+        ticker = s.get("ticker")
+        if not ticker:
+            continue
+        out.append({"series_ticker": ticker, "category": cat or "unknown", "title": s.get("title")})
+    return out
+
+
+def normalize_market(raw: dict, series: dict, cutoff_ts: int) -> dict | None:
+    """Turn a raw market object into a row for the `markets` table.
+
+    Returns None if the market is unusable: no ticker, no settlement time, or a
+    result that is not exactly 'yes' or 'no' (void and unresolved markets cannot
+    be scored against an outcome).
+
+    `category` and `series_ticker` are both taken from the series rather than the
+    market, because the market object carries neither.
+    """
+    ticker = raw.get("ticker")
+    result = (raw.get("result") or "").strip().lower()
+    if not ticker or result not in ("yes", "no"):
+        return None
+
+    settle_ts = to_unix(raw.get("settlement_ts"))
+    settle_source = "settlement_ts"
+    if settle_ts is None:
+        settle_ts = to_unix(raw.get("close_time"))
+        settle_source = "close_time"
+    if settle_ts is None:
+        return None
+
+    return {
+        "ticker": ticker,
+        "series_ticker": series["series_ticker"],
+        "category": series.get("category") or "unknown",
+        "title": raw.get("title"),
+        "close_ts": to_unix(raw.get("close_time")),
+        "settle_ts": settle_ts,
+        "result": result,
+        "p_horizon": None,      # filled by the price-series fetch
+        "yes_ask": None,
+        "yes_bid": None,
+        "horizon_ts": None,
+        "tier": "historical" if settle_ts < cutoff_ts else "live",
+        "_settle_source": settle_source,   # provenance, not a table column
+    }
+
+
+async def discover_markets(
+    client, series: dict, cutoff_ts: int, max_markets: int | None = None
+) -> list[dict]:
+    """Page settled markets for one series and normalize them.
+
+    Filtering by series_ticker is not optional: the unfiltered feed is entirely
+    auto-generated multivariate parlay markets (KXMVE...), which settle every few
+    minutes, carry no candlestick history, and would swamp any real sample.
+    """
+    out = []
+    async for raw in client.paginate(
+        "/markets",
+        {"series_ticker": series["series_ticker"], "status": "settled", "limit": 200},
+        key="markets",
+        max_items=max_markets,
+    ):
+        m = normalize_market(raw, series, cutoff_ts)
+        if m is not None:
+            out.append(m)
+    return out
 
 
 def db_summary(conn: sqlite3.Connection) -> dict:

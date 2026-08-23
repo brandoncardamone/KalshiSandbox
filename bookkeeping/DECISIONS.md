@@ -233,3 +233,61 @@ two months (mid-June to late-August 2026) rather than an arbitrary historical
 depth. That is a real constraint on generalization — one calendar window, one
 seasonal regime — and it is stated rather than hidden. It does not threaten the
 sample size: KXHIGHNY alone supplies 402 markets against a target of 250.
+
+---
+
+## D13 — Choose series by horizon viability, not by market count
+*Step 4*
+
+**Chose:** 12 series across 4 categories, selected on a measured sample of how
+many of their markets actually yield a usable quote 24 hours before settlement.
+
+**Rejected:** selecting the largest series by settled-market count.
+
+**Why:** the two largest categories are worthless for this project, and the raw
+counts hide it completely. Crypto offers 828,993 settled markets and Financials
+133,039 — between them, 99% of everything available. But `KXBTCD`,
+`KXNASDAQ100U`, `KXBTC15M` and the rest are hourly and 15-minute contracts with
+observed lifetimes of 0–23 hours. **They do not exist 24 hours before they
+settle.** Sampling 25 markets from each of three Financials series produced
+**0 usable observations, 75 of 75 failing `none_at_horizon`.**
+
+Selecting on count would have meant an ingest of hundreds of thousands of markets
+running for hours and yielding nothing. The viability probe that caught it took
+25 seconds.
+
+**The corollary that shaped the final list:** variation *within* a category
+exceeds variation *between* categories. Economics runs from `KXAAAGASD` at 12%
+usable to `KXFEDTWEETS` at 76%. So series are picked individually; no category is
+taken wholesale.
+
+---
+
+## D14 — Pin a balanced sample rather than the largest one
+*Step 4*
+
+**Chose:** 3 weather cities rather than all 6, giving ~2,703 discovered markets
+with weather at roughly 46% of the total.
+
+**Rejected:** the maximum sample (~3,927 discovered), where weather would be
+~64%.
+
+**Why:** with weather at nearly two-thirds, the headline calibration number would
+mostly be a statement about daily temperature markets while being *presented* as
+a statement about the exchange. The per-category breakdown would still expose
+that, but the aggregate would be quietly misleading — and the aggregate is what
+gets quoted.
+
+Balance costs sample size, but ~2,000 expected usable observations is eight times
+the `target_markets` of 250, so precision was never the binding constraint here.
+
+**Also rejected: capping every category evenly (~814 usable).** More honest still
+for the aggregate, but it throws away most of the sample and thins out the tail
+bins, which is exactly where longshot bias is measured and where noise is already
+the problem.
+
+**Timing matters as much as the choice.** The list was written into `CONFIG`
+**before any prices were fetched**. Choosing series, seeing the calibration
+result, then revising the series would be selecting on the outcome — the same
+error as tuning the backtest threshold against the test set, and just as fatal to
+the result's credibility.
