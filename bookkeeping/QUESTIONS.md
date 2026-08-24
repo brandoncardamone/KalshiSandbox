@@ -220,3 +220,39 @@ committed earlier would be quoting numbers that did not yet exist.
 **Decision:** commit at the end of each step from Step 4 onward; push at Step 10
 after review. Steps 1–3 get three commits reflecting what was genuinely built in
 each, since they were in fact built in that sequence.
+
+---
+
+## Q8 — So Step 8 is done?
+*2026-08-23, after Step 8*
+
+Yes. Built, verified, and staged — but **not committed**, since Brandon runs the
+commits from Step 5 onward.
+
+What "done" covers:
+
+- All six functions built: `taker_fee`, `apply_slippage`, `max_drawdown`,
+  `select_overpriced_bins`, `backtest`, `run_backtest`.
+- Cost primitives unit-tested against hand-computed values **before** any result
+  was trusted — `taker_fee(0.50) = 0.02`, the 0.99 slippage clamp, and the
+  drawdown edge cases including a curve that only ever loses.
+- Backtest run on both samples: **368** and **169** out-of-sample trades.
+- Sharpe per trade (**−0.108** / **−0.074**) and max drawdown (**−18.37** /
+  **−11.37** per contract) reported, test window only.
+- Lookahead audit passed on both samples, including the scramble test.
+- `outputs/equity_curve.png` emitted.
+- Resume bullet 3 checked clause by clause — all four clauses backed, nothing to
+  strike.
+
+**The one thing to be aware of:** the result is **negative**. Both samples lose
+money. That is a finding rather than a failure, and it is not going to be tuned
+into a positive number — see [`DECISIONS.md` D21]. If anyone asks about this
+project, the backtest losing is the most defensible part of it, because the
+reason it loses is measured rather than guessed: the gross edge before costs has
+a t-statistic of **+0.26**, meaning there was no exploitable mispricing at a
+24-hour horizon to begin with.
+
+**Still outstanding:** Steps 9 (`run.py --analyze` + `results.json`) and 10
+(README + resume reconciliation + push). Step 9 blocks Step 10, because the
+README may only quote numbers that exist in `results.json`.
+
