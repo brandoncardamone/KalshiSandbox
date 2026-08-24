@@ -11,56 +11,59 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 
 ---
 
-## ▶ Resume here — last updated 2026-08-23, end of Step 8
+## ▶ Resume here — last updated 2026-08-24, end of Step 9
 
-**Steps 0–8 complete. Next is Step 9 (`run.py --analyze` + `outputs/results.json`).**
+**Steps 0–9 complete. Only Step 10 remains: README + resume reconciliation + push.**
 
 State on disk:
 
 | | |
 |---|---|
-| `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running |
-| `outputs/` | `calibration.png`, `calibration_by_category.png`, `equity_curve.png` |
-| Git | Steps 1–7 committed. **Step 8 is staged, not committed** |
-| Suggested commit | `Step 8 of plan: Backtest with costs, slippage, Sharpe and drawdown` |
+| `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running, and re-running it would change the sample |
+| `outputs/` | `calibration.png`, `calibration_by_category.png`, `equity_curve.png`, **`results.json`** |
+| Git | Steps 1–8 committed. **Step 9 is staged, not committed** |
+| Suggested commit | `Step 9 of plan: Wire up analysis CLI and emit results.json` |
 | Credentials | Working. `.env` at repo root, key outside all repos in `../Kalshi backtester/key/` |
 
-`run.py --analyze` is **still not wired up** — that is Step 9, and it is the last
-piece of real work. Until then the analysis functions are called directly from
-Python. `results.json` does not exist yet; Step 10's README must quote only from
-it, so Step 9 blocks Step 10.
+`python run.py --analyze` now runs the whole analysis from SQLite in a few
+seconds, needs no API access, and rewrites `outputs/results.json`.
 
-### The five results that matter
+### What Step 10 has to do
 
-**1. Headline calibration** (full sample, n=1,983): Brier **0.1558** vs baseline
-0.1937, log loss **0.4634** vs 0.5759, skill **+0.196**, base rate 0.2627.
+1. Write `README.md` in the spec's section order: one-line summary → data →
+   method → embedded `calibration.png` → findings in plain English → backtest
+   result → limitations → how to run.
+2. **Quote only numbers present in `results.json`.** That is criterion 8, the one
+   remaining unmet criterion, and the reason `results.json` exists.
+3. Mandatory limitations section — at minimum: small n in tail bins; a few series
+   limits generalization; mid-price is not executable; the 0.07 taker-fee
+   multiplier is assumed; no maker/taker distinction; single horizon tested.
+   **Add to the spec's list:** the `max_spread` filter was chosen after seeing
+   results, the sample is one ~2-month window, and Weather is 45% of it.
+4. Run the section 9 resume reconciliation and strike any unbacked clause.
+5. Push.
 
-**2. Liquidity is the dominant story.** 322 of 1,983 markets (16.2%) are empty
-books quoted around 0.045 / 0.906, mean spread **0.861**:
+### Resume reconciliation, provisional
 
-| Sample | n | Brier | Skill |
-|---|---|---|---|
-| Full | 1,983 | 0.1558 | +0.196 |
-| Liquid (spread ≤ 0.20) | 1,661 | 0.1416 | **+0.313** |
-| Illiquid (> 0.20) | 322 | 0.2289 | **−1.150** |
+Every clause currently stands. Nothing needs striking on present evidence:
 
-**7 of 12 series have zero illiquid markets**; `KXARGNACBSPREAD` alone supplies
-254 of the 322.
+| Clause | Backed by | Status |
+|---|---|---|
+| "asynchronous data pipeline" | `client.py`, semaphore-capped at 8, verified | ✅ |
+| "RSA-PSS authenticated" | `auth.py` | ✅ |
+| "200+ resolved markets" | 1,983 priced | ✅ |
+| "price series into a queryable SQLite store" | 141,073 candles, criterion 9 | ✅ |
+| "Brier score and log loss" | 0.1558 / 0.4634, both with baselines | ✅ |
+| "quantifying systematic mispricing (e.g., longshot bias)" | Measured and **absent**; see wording note below | ⚠️ |
+| "across event categories" | 4 qualifying categories, criterion 10 | ✅ |
+| "fade-the-mispricing strategy with costs and slippage" | Criterion 11, 537 trades audited | ✅ |
+| "out-of-sample Sharpe and drawdown" | −0.0744 / −11.37, criterion 12 | ✅ |
 
-**3. Longshot bias was NOT found**, in aggregate or in any category. All eight
-tested deltas have |z| < 1.6. See [`DECISIONS.md` D16, D18].
-
-**4. Calibration varies by category** — skill from **−0.031** (Sports) to
-**+0.562** (Economics). Sports is negative only because of the illiquid
-`KXARGNACBSPREAD` block; on liquid markets it is +0.224. See [D17].
-
-**5. The backtest loses money, and the reason is that there was nothing to
-harvest.** Liquid subsample: 169 out-of-sample trades, Sharpe/trade **−0.074**,
-max drawdown **−11.37** per contract, mean **−0.0325**/contract. The gross edge
-*before any costs* is +0.0086 with **t = +0.26** — indistinguishable from zero.
-The full sample's huge apparent gross edge (+0.199, t = +9.03) is the empty-book
-artifact and is erased almost exactly by the spread cost of −0.2199. See [D20,
-D21, D22].
+**The one wording risk is "e.g., longshot bias".** The project *quantified* it —
+which is what the bullet claims — and found it absent (all |z| < 1.6). That is a
+defensible reading, but a reader could take the phrasing to imply it was found.
+Step 10 should decide whether to keep the clause as-is, given the README will
+state the negative result plainly a few lines later. Flagged, not decided.
 
 ### Open question for Step 10, not yet decided
 
@@ -75,14 +78,14 @@ as the finding. Brandon has not ruled.
    and it is a declared CONFIG value. All three must survive into the README.
 2. Weather is 45% of the sample and supplies **479 of the 721** low-probability
    observations. No aggregate low-probability claim is really a claim about
-   "Kalshi" — it is mostly a claim about three cities' temperature markets.
-3. The backtest result is negative and **must not be retuned**. `overprice_threshold`
-   stays at 0.03. Anyone revisiting this: changing it after seeing the test result
-   is the exact failure the split exists to prevent.
+   "Kalshi".
+3. The backtest result is negative and **must not be retuned**.
 4. The sample covers a single ~2-month window (2026-06-17 → 2026-08-23) and 12
    series. It does not generalize to "Kalshi" and the README must not say it does.
-5. `apply_slippage` clamps at 0.99, which made the model *less* punitive than
-   intended on the worst empty-book trades. Disclosed in the Step 8 section.
+5. `apply_slippage` clamps at 0.99; 104 of 368 full-sample trades got less than
+   the intended 1¢. Measured in `results.json`, disclose in the README.
+6. Two candles-per-market figures exist — **52.0** per discovered market, **71.1**
+   per priced market. Quote whichever, but name the denominator.
 
 ---
 
@@ -99,7 +102,7 @@ as the finding. Brandon has not ruled.
 | 6 | Calibration core | ✅ | "Brier score and log loss", "longshot bias" |
 | 7 | Per-category breakdown | ✅ | "across event categories" |
 | 8 | Backtest: costs, slippage, drawdown | ✅ | "costs and slippage", "Sharpe and drawdown" |
-| 9 | `run.py` CLI + `results.json` | ⬜ | — (makes everything reproducible) |
+| 9 | `run.py` CLI + `results.json` | ✅ | — (makes everything reproducible) |
 | 10 | README + resume reconciliation + push | ⬜ | verifies **all** claims |
 
 ---
@@ -1161,15 +1164,132 @@ negative, which is a result, not a failure to produce one.
 
 ---
 
-## Step 9 — CLI + `results.json` ⬜
+## Step 9 — CLI + `results.json` ✅
+*2026-08-24*
 
-`--ingest`, `--analyze`, `--all`. `outputs/results.json` records every metric,
-all config used, run timestamp, discovered/priced/skipped-with-reasons counts,
-the `by_category` block, `slippage_cents`, `sharpe_per_trade`, `max_drawdown`,
-and **which field supplied the settlement timestamp** (explicit field vs
-`close_time` fallback), so the horizon definition stays honest.
+Makes the project runnable by someone who is not me, and produces the one file
+the README is allowed to quote from.
 
-This file becomes the single source of truth the README quotes from.
+### Built
+
+In `run.py`:
+
+| Function | What it does |
+|---|---|
+| `build_results(config)` | Recomputes every number from the database and assembles them into one dict |
+| `audit_slippage(df, config)` | Criterion 11, checked trade by trade rather than asserted |
+| `check_acceptance(results)` | All twelve spec criteria, evaluated on real output |
+| `_print_acceptance(acc)` | Prints them with the resume clause each one backs |
+| `do_analyze_run(config)` | Runs everything, writes `outputs/results.json`, prints the summary |
+
+`--analyze` and `--all` are wired; the `raise SystemExit("analysis not wired up
+yet")` stub is gone.
+
+In `ingest.py`: `derive_ingest_counts(conn, horizon_sec)`.
+
+### The problem this step had to solve first
+
+Spec section 5.5 requires `results.json` to carry the discovered / priced /
+**skipped-with-reasons** counts. Those counts existed only in the summary
+`run_ingest()` returns while it runs — there is no `skip_reason` column, and
+`run.py --analyze` can be invoked on its own days later with no such summary in
+hand.
+
+Three options, and the difference between them matters:
+
+1. **Type the numbers in** from the step-5 console output recorded in this file.
+   Rejected. They would be real numbers, but nothing in the code would recompute
+   or check them, and a later change could silently invalidate them.
+2. **Re-run the ingest** to regenerate the summary. Rejected, and this one was
+   tempting. More markets have settled since the step-5 run, so a re-ingest would
+   collect a **different sample** and silently invalidate every number recorded
+   against the current one, throughout steps 6-8 and this file.
+3. **Recompute the counts from the database** by re-applying the same rules
+   `extract_horizon` applied during ingest. Chosen.
+
+Option 3 works because candles were stored for every discovered market, including
+the 732 that never produced a usable quote. A market with no candle at or before
+`settle_ts − 86400` was `none_at_horizon`; one with a candle whose bid or ask sat
+outside (0,1) was `quote_out_of_range`.
+
+**It reproduces the step-5 tally exactly** — 617 `quote_out_of_range` and 115
+`none_at_horizon`, summing to the 732 unpriced markets. That agreement is the
+check that the derivation is faithful rather than merely plausible, and it means
+`results.json` contains no number that was carried over by hand.
+
+### A number that was ambiguous, now disambiguated
+
+Step 5 recorded **52.0** candles per market; the natural computation here gave
+**71.1**. Both are correct and they use different denominators — 141,073 candles
+over 2,715 **discovered** markets versus over 1,983 **priced** ones. Candles were
+fetched for every discovered market, including those later skipped.
+
+`results.json` now emits both, named explicitly, so the README cannot quote one
+while implying the other.
+
+### `outputs/results.json`
+
+86 KB, eight top-level blocks:
+
+| Key | Contents |
+|---|---|
+| `run_timestamp` | UTC, ISO-8601, second precision |
+| `config` | All 13 CONFIG values actually used |
+| `counts` | Discovered / priced / skipped by reason, candle rows, date range, breakdown by category, series and tier |
+| `gates` | The four ingest gates including the criterion-3 halt gate |
+| `calibration` | Step 6: full, liquid and illiquid blocks, per-bin tables, longshot summaries |
+| `by_category` | Step 7: per-category blocks, comparison rows, skill dispersion |
+| `backtest` | Step 8: both samples, cost attribution, t-stats, plus the slippage audit |
+| `acceptance` | All twelve criteria with pass/fail and the evidence for each |
+
+### Acceptance criteria — 11/11 pass, 1 deferred
+
+Every criterion is evaluated against real output, and criteria 9-12 report the
+number checked plus the resume clause they defend.
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | pipeline runs | ✅ (see caveat below) |
+| 2 | ≥ 200 usable markets | ✅ 1,983 |
+| 3 | HALT GATE: prices point the right way | ✅ z = 21.0 |
+| 4 | `p_horizon` strictly inside (0,1) | ✅ 0 out of range, min 0.015 max 0.985 |
+| 5 | `calibration.png` exists | ✅ |
+| 6 | `results.json` carries every required field | ✅ nothing missing |
+| 7 | `.env` and `*.pem` gitignored | ✅ |
+| 8 | README quotes only `results.json` | ⏸ **deferred to Step 10** |
+| 9 | price series stored, not one row per market | ✅ 141,073 rows / 1,983 markets |
+| 10 | `by_category`, ≥ 3 qualifying categories | ✅ 4 of 4 |
+| 11 | entry strictly worse than mid and passive quote | ✅ 537 trades checked |
+| 12 | `max_drawdown` + `sharpe_per_trade`, out-of-sample | ✅ −11.37, −0.0744 |
+
+**Criterion 1 carries a caveat, stated in the file itself.** `--analyze` was run
+end to end and this `results.json` is its output. `--all` additionally re-runs
+the ingest, which was deliberately **not** exercised, for the reason in option 2
+above: it would collect a different sample. The code path is `do_ingest_run()`
+then `do_analyze_run()`, and the ingest half was exercised in step 5. This is
+recorded rather than glossed, because "criterion 1 passes" would otherwise imply
+a run nobody performed. See [`DECISIONS.md` D24].
+
+**Criterion 11 is checked, not asserted.** For all 537 trades across both
+samples, entry is strictly worse than the midpoint a naive backtest would have
+used *and* strictly worse than the passive quote a resting order would have got.
+
+### The clamp softness, now measured
+
+Step 8 disclosed in prose that `apply_slippage` clamps entry at 0.99 and so
+absorbs part of the intended 1¢ on the worst books. It is now a published number
+in `results.json` under `backtest.slippage_audit.clamp_effect`:
+
+| Sample | trades | clamped | mean slippage actually applied | intended |
+|---|---|---|---|---|
+| full sample | 368 | **104** | 0.00717 | 0.01 |
+| liquid subsample | 169 | 6 | 0.00964 | 0.01 |
+
+The clamp never makes entry *better* than the quote — the minimum applied
+slippage is 0.0, never negative — but on 28% of full-sample trades the cost model
+is softer than advertised. Those trades lost heavily anyway, so the conclusion
+does not depend on it. Published so a reader can see the size of the softness
+instead of taking my word for it.
 
 ---
 

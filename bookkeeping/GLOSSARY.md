@@ -329,6 +329,31 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 
 **Push / fetch** — send local commits to the remote / retrieve remote commits.
 
+
+---
+
+## 9. Reproducibility & verification
+
+*Introduced: Step 9*
+
+**`results.json`** — the single file the README is allowed to quote from. Holds every metric, the config that produced it, the run timestamp, and the counts. It exists because a README written from console scrollback can drift from the code with nobody noticing, and a reader has no way to check it. Everything in it is recomputed from the database on each run.
+
+**Single source of truth** — the rule that one artifact is authoritative and everything else quotes it. Here it means a number may appear in the README only if it appears in `results.json` first.
+
+**Derived vs recorded** — a *recorded* number was copied from an earlier run's output; a *derived* number is recomputed from stored data every time. The skip-reason counts are derived, which is why they can be checked: the derivation reproduces the step-5 run exactly (617 and 115).
+
+**Reconciliation check** — proving a breakdown sums to its total, e.g. `discovered − priced == sum(skipped_by_reason)`. Emitted as a `reconciles` flag so a silent gap is impossible rather than merely unlikely.
+
+**Acceptance criterion** — a specific, checkable condition the build must meet, defined in the spec **before** the work. Twelve of them here; criteria 9–12 exist purely to verify resume claims, and each reports the resume clause it defends.
+
+**Deferred criterion** — one that cannot be met yet because its subject does not exist. Criterion 8 (the README quotes only `results.json`) is deferred to Step 10 and is reported as deferred rather than as passing or failing.
+
+**Checked vs asserted** — the difference between testing a claim on real data and writing it down. Criterion 11 is *checked*: all 537 trades are compared against both the midpoint and the passive quote, rather than trusting that `apply_slippage` did its job.
+
+**Passive quote** — the price a resting (non-crossing) order would get: `1 − yes_ask` for a NO position. The backtest's entry must be worse than this as well as worse than the mid, since a passive order might never fill at all.
+
+**Clamp effect** — how much of an intended cost a boundary condition silently absorbed. `apply_slippage` caps entry at 0.99, so on **104 of 368** full-sample trades less than the intended 1¢ was actually charged. Published as a number, because a cost model that is softer than advertised is exactly the kind of thing that should not live only in a comment.
+
 **Branch** — a named line of development. `main` and `master` are both just default names.
 
 **Blob** — git's word for one stored file's contents. Identified by a hash of the content, so **identical files have identical hashes** — which is how we proved `rainbowcursor.py` in the outer repo was byte-for-byte the same as the copy in `random-fun-stuff` and therefore safe to delete.

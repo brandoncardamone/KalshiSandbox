@@ -519,3 +519,56 @@ a mean without a standard error can be made to tell either story. Both are
 reported for every figure, so neither the flattering reading nor the dramatic one
 can be told without the number that contradicts it sitting next to it.
 
+
+---
+
+## D23 — Derive the ingest counts from the database, never from a run log
+
+**Step 9.** `results.json` is required to carry discovered / priced / skipped-by-
+reason counts, but those lived only in the summary `run_ingest()` returns while
+it runs. There is no `skip_reason` column, and `--analyze` can be invoked alone
+days later.
+
+The easy path was to type in the numbers this file already records from the
+step-5 run — 617 `quote_out_of_range`, 115 `none_at_horizon`. They are real
+measured numbers, so nothing about that would have been fabrication.
+
+**It was still rejected.** A typed-in number is not recomputed and not checked;
+it is a claim about a run that happened once, and any later change to the
+horizon, the rejection rules or the sample would leave it silently stale while
+still looking authoritative. `results.json` is supposed to be the file a reader
+can trust over everything else, and it cannot contain numbers nothing verifies.
+
+**Chosen instead:** `derive_ingest_counts()` recomputes the tally from stored
+data by re-applying the rules `extract_horizon` used. This is possible only
+because candles were stored for every discovered market, including skipped ones.
+
+**The reason to believe it:** it reproduces the step-5 run **exactly**, 617 and
+115, summing to the 732 unpriced markets. Two independent computations agreeing
+is the check; a `reconciles` flag ships alongside so the arithmetic is verifiable
+by anyone reading the file.
+
+---
+
+## D24 — Do not run `--all`, and say so on criterion 1
+
+**Step 9.** Criterion 1 is "`python run.py --all` completes from a clean
+checkout." `--all` runs ingest and then analysis.
+
+Running it would have been the literal reading, and it was rejected. More markets
+have settled since the step-5 ingest, so a re-run would collect a **different
+sample** — and every number in steps 6, 7 and 8, in this bookkeeping and in
+`results.json`, is recorded against the current one. The cost of literal
+compliance is invalidating three steps of measured results.
+
+**Decision:** exercise `--analyze` end to end, which is what produced the
+existing `results.json`, and leave the ingest half as it was verified in step 5.
+
+**What makes this acceptable is that it is stated rather than glossed.** The
+criterion's own `detail` field in `results.json` says `--all` was not exercised
+and why. Marking criterion 1 as a bare pass would imply a run nobody performed,
+which is the kind of small dishonesty that costs more than the thing it buys.
+
+Anyone wanting a genuine `--all` run should expect a different sample and should
+re-derive every downstream number rather than mixing the two.
+

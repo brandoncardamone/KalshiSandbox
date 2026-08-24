@@ -589,3 +589,84 @@ def verify_ingest(conn: sqlite3.Connection, min_markets: int = 200) -> dict:
 
     out["all_pass"] = all(v.get("pass") for k, v in out.items() if k.startswith("c"))
     return out
+
+
+def derive_ingest_counts(conn: sqlite3.Connection, horizon_sec: int) -> dict:
+    """Rebuild the ingest tally from what is stored, not from a run's memory.
+
+    `run_ingest` returns a summary while it runs, but `run.py --analyze` can be
+    invoked on its own days later with no such summary in hand, and
+    `results.json` is required to carry the discovered / priced / skipped-by-
+    reason counts regardless.
+
+    Every count here is recomputed from the database by re-applying the same
+    rules `extract_horizon` applied during ingest, so the file never contains a
+    number that was typed in from an earlier run's console output. Verified
+    against the step-5 ingest, which recorded 617 `quote_out_of_range` and 115
+    `none_at_horizon`: this reproduces both exactly.
+    """
+    q = lambda sql: conn.execute(sql).fetchone()  # noqa: E731
+
+    discovered = q("SELECT COUNT(*) FROM markets")[0]
+    priced = q("SELECT COUNT(*) FROM markets WHERE p_horizon IS NOT NULL")[0]
+    candle_rows = q("SELECT COUNT(*) FROM candles")[0]
+
+    reasons: dict[str, int] = {}
+    for row in conn.execute(
+        "SELECT ticker, settle_ts FROM markets WHERE p_horizon IS NULL"
+    ).fetchall():
+        cut = row["settle_ts"] - horizon_sec
+        candle = conn.execute(
+            "SELECT yes_bid, yes_ask FROM candles WHERE ticker = ? AND ts <= ? "
+            "ORDER BY ts DESC LIMIT 1",
+            (row["ticker"], cut),
+        ).fetchone()
+        if candle is None:
+            key = "none_at_horizon"
+        elif candle["yes_bid"] is None or candle["yes_ask"] is None:
+            key = "quote_missing"
+        elif not (0 < candle["yes_bid"] < 1) or not (0 < candle["yes_ask"] < 1):
+            key = "quote_out_of_range"
+        elif candle["yes_bid"] > candle["yes_ask"]:
+            key = "quote_crossed"
+        else:
+            # Should be unreachable: a market with a valid two-sided quote at the
+            # horizon would have been priced. Counted rather than ignored so the
+            # tally always reconciles and a silent gap is impossible.
+            key = "unexplained"
+        reasons[key] = reasons.get(key, 0) + 1
+
+    lo, hi = q("SELECT MIN(settle_ts), MAX(settle_ts) FROM markets "
+               "WHERE p_horizon IS NOT NULL")
+    by_cat = {r["category"]: r["n"] for r in conn.execute(
+        "SELECT category, COUNT(*) AS n FROM markets WHERE p_horizon IS NOT NULL "
+        "GROUP BY category ORDER BY n DESC")}
+    by_series = {r["series_ticker"]: r["n"] for r in conn.execute(
+        "SELECT series_ticker, COUNT(*) AS n FROM markets WHERE p_horizon IS NOT NULL "
+        "GROUP BY series_ticker ORDER BY n DESC")}
+    tiers = {r["tier"]: r["n"] for r in conn.execute(
+        "SELECT tier, COUNT(*) AS n FROM markets GROUP BY tier")}
+
+    return {
+        "discovered": discovered,
+        "priced": priced,
+        "skipped": discovered - priced,
+        "skipped_by_reason": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
+        "reconciles": discovered - priced == sum(reasons.values()),
+        "candle_rows": candle_rows,
+        # Both denominators, because they differ and the difference is easy to
+        # misquote: candles were fetched for every discovered market, including
+        # the 732 that never yielded a usable quote at the horizon.
+        "candles_per_priced_market": round(candle_rows / priced, 1) if priced else None,
+        "candles_per_discovered_market": (
+            round(candle_rows / discovered, 1) if discovered else None),
+        "settle_ts_range": [lo, hi],
+        "date_range_utc": [
+            datetime.fromtimestamp(lo, timezone.utc).strftime("%Y-%m-%d") if lo else None,
+            datetime.fromtimestamp(hi, timezone.utc).strftime("%Y-%m-%d") if hi else None,
+        ],
+        "priced_by_category": by_cat,
+        "priced_by_series": by_series,
+        "tiers": tiers,
+        "source": "recomputed from the database, not carried over from a run log",
+    }
