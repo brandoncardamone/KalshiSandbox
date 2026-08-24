@@ -305,6 +305,107 @@ def plot_calibration(
     plt.close(fig)
 
 
+def plot_longshot(
+    tab: pd.DataFrame,
+    out_path: str,
+    n_total: int,
+    horizon_hours: int,
+    summary: dict,
+    tab_liquid: pd.DataFrame | None = None,
+    max_spread: float | None = None,
+    n_liquid: int | None = None,
+    summary_liquid: dict | None = None,
+    min_bin_n: int = 20,
+) -> None:
+    """Deviation from the priced probability, which is where longshot bias lives.
+
+    The reliability diagram answers "is it calibrated"; this chart answers "and
+    if not, in which direction, and by how much". It plots
+    `delta = realized - mean_pred` against the priced probability, so perfect
+    calibration is the flat zero line rather than the diagonal, and the vertical
+    axis is directly readable in percentage points of mispricing.
+
+    Longshot bias would appear as points sitting BELOW zero on the left of the
+    chart: unlikely outcomes happening less often than they were priced. The
+    p <= 0.3 region is shaded to make that region unambiguous, and the measured
+    aggregate delta for it is printed on the chart with its z-score, so the
+    figure states the negative result rather than leaving it to be inferred from
+    points that look close to a line.
+    """
+    fig, ax = plt.subplots(figsize=(9.5, 6.4))
+
+    ax.axhspan(-1, 1, xmin=0, xmax=0.3, color="#f0f0f0", zorder=0)
+    ax.text(0.145, 0.022, "longshot region (p ≤ 0.3)", ha="center", va="bottom",
+            transform=ax.get_xaxis_transform(), fontsize=9, color="#999999",
+            zorder=1)
+    ax.axhline(0.0, color="#333333", lw=1.3, ls="--", zorder=2,
+               label="perfectly calibrated (delta = 0)")
+
+    def draw(t, color, label, z, off=0):
+        pts = t[t["realized"].notna()]
+        big, small = pts[pts["n"] >= min_bin_n], pts[pts["n"] < min_bin_n]
+        if not big.empty:
+            ax.errorbar(big["mean_pred"], big["delta"], yerr=big["se"], fmt="o",
+                        ms=7, capsize=4, lw=1.4, color=color, label=label, zorder=z)
+        if not small.empty:
+            ax.errorbar(small["mean_pred"], small["delta"], yerr=small["se"],
+                        fmt="o", ms=7, capsize=4, lw=1.4, color=color, alpha=0.35,
+                        mfc="white", zorder=z)
+        for i, r in enumerate(pts.itertuples()):
+            ax.annotate(f"n={int(r.n)}", (r.mean_pred, r.delta),
+                        textcoords="offset points",
+                        xytext=(8, 5 if (i + off) % 2 else -13),
+                        fontsize=7.5, color=color)
+
+    if tab_liquid is not None:
+        draw(tab, "#d62728", f"all markets (n={n_total:,})", 3, off=0)
+        draw(tab_liquid, "#1f77b4",
+             f"spread ≤ {max_spread:.2f} (n={n_liquid:,})", 4, off=1)
+    else:
+        draw(tab, "#1f77b4", f"all markets (n={n_total:,})", 3)
+
+    # State the measured result on the figure itself.
+    src = summary_liquid or summary
+    lo, hi = src.get("low_prob_bins"), src.get("high_prob_bins")
+    lines = []
+    if lo:
+        lines.append(
+            "p ≤ 0.3:  delta {:+.4f}   z = {:+.2f}   n = {}   {}".format(
+                lo["delta"], lo["z"], lo["n"],
+                "SIGNIFICANT" if lo["significant_5pct"] else "not significant"))
+    if hi:
+        lines.append(
+            "p ≥ 0.7:  delta {:+.4f}   z = {:+.2f}   n = {}   {}".format(
+                hi["delta"], hi["z"], hi["n"],
+                "SIGNIFICANT" if hi["significant_5pct"] else "not significant"))
+    if lines:
+        which = "liquid subsample" if summary_liquid else "full sample"
+        ax.text(0.985, 0.975, (which + "\n" + "\n".join(lines)),
+                transform=ax.transAxes, ha="right", va="top", fontsize=9,
+                family="monospace",
+                bbox=dict(boxstyle="round,pad=0.5", fc="#ffffff", ec="#bbbbbb"))
+
+    lim = float(np.nanmax(np.abs(np.concatenate([
+        tab["delta"].to_numpy(dtype=float),
+        (tab_liquid["delta"].to_numpy(dtype=float)
+         if tab_liquid is not None else np.array([0.0]))]))))
+    lim = max(0.12, min(lim * 1.55, 1.0))
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-lim, lim)
+    ax.set_xlabel("Market-implied probability (mid-price at horizon)")
+    ax.set_ylabel("delta  =  realized frequency − implied probability")
+    ax.set_title(
+        "Longshot bias check: {:,} settled markets, priced {}h before settlement\n"
+        "below zero = outcomes happened LESS often than priced (overpriced)".format(
+            n_total, horizon_hours),
+        fontsize=12)
+    ax.grid(alpha=0.25, lw=0.6)
+    ax.legend(loc="upper left", fontsize=8.5, framealpha=0.9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 # --------------------------------------------------------------------------
 # Top level
 # --------------------------------------------------------------------------
@@ -353,6 +454,18 @@ def run_calibration(df: pd.DataFrame, config: dict, out_dir: str = "outputs") ->
         max_spread=max_spread,
         n_liquid=len(liquid),
     )
+    plot_longshot(
+        full_block["_tab"],
+        f"{out_dir}/longshot_bias.png",
+        n_total=len(df),
+        horizon_hours=config["horizon_sec"] // 3600,
+        summary=full_block["longshot"],
+        tab_liquid=liq_block["_tab"],
+        max_spread=max_spread,
+        n_liquid=len(liquid),
+        summary_liquid=liq_block["longshot"],
+        min_bin_n=min_bin_n,
+    )
 
     for b in (full_block, liq_block, illiq_block):
         if b is not None:
@@ -394,6 +507,10 @@ def _cat_entry(name: str, sub: pd.DataFrame, config: dict) -> dict:
 
     full_block = _score_block(sub, n_bins, min_bin_n)
     liq_block = _score_block(liquid, n_bins, min_bin_n) if len(liquid) else None
+    # Scored too, because the illiquid half is where the per-category surprises
+    # live: Sports' negative headline skill comes entirely from its illiquid
+    # block, and a reader cannot check that claim unless the number is published.
+    illiq_block = _score_block(illiquid, n_bins, min_bin_n) if len(illiquid) else None
 
     return {
         "category": name,
@@ -412,6 +529,7 @@ def _cat_entry(name: str, sub: pd.DataFrame, config: dict) -> dict:
         ),
         "full_sample": full_block,
         "liquid_sample": liq_block,
+        "illiquid_sample": illiq_block,
     }
 
 
@@ -428,13 +546,40 @@ def plot_category_calibration(
     to each other, and rescaling each to its own data would make a category that
     only ever trades between 0.1 and 0.3 look like it spans the whole range.
     """
-    n = len(entries)
+    # One overlay panel (spec 5.3: "one line per qualifying category over the
+    # shared diagonal") followed by one panel per category. The overlay answers
+    # "do the categories differ"; the individual panels answer "how", and each
+    # question is illegible on the other's chart.
+    n = len(entries) + 1
     ncols = 2 if n > 1 else 1
     nrows = (n + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(6.0 * ncols, 5.8 * nrows),
                              squeeze=False)
+    flat = axes.ravel()
 
-    for ax, e in zip(axes.ravel(), entries):
+    ax0 = flat[0]
+    ax0.plot([0, 1], [0, 1], "--", color="#888888", lw=1.1, zorder=1)
+    palette = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
+    for k, e in enumerate([x for x in entries if x["interpreted"]]):
+        block = e["liquid_sample"] or e["full_sample"]
+        t = block["_tab"]
+        pts = t[(t["realized"].notna()) & (t["n"] >= 20)]
+        if pts.empty:
+            continue
+        ax0.plot(pts["mean_pred"], pts["realized"], "-o", ms=5, lw=1.5,
+                 color=palette[k % len(palette)],
+                 label="{} (n={:,})".format(e["category"], block["n_markets"]))
+    ax0.set_xlim(-0.02, 1.02)
+    ax0.set_ylim(-0.02, 1.02)
+    ax0.set_aspect("equal")
+    ax0.grid(alpha=0.25, lw=0.6)
+    ax0.set_xlabel("Market-implied probability", fontsize=9)
+    ax0.set_ylabel("Realized frequency of YES", fontsize=9)
+    ax0.set_title("All qualifying categories, shared diagonal\n"
+                  "liquid subsample, bins with n ≥ 20", fontsize=10.5)
+    ax0.legend(loc="upper left", fontsize=8, framealpha=0.9)
+
+    for ax, e in zip(flat[1:], entries):
         ax.plot([0, 1], [0, 1], "--", color="#888888", lw=1.1, zorder=1)
 
         full, liq = e["full_sample"], e["liquid_sample"]
@@ -465,7 +610,7 @@ def plot_category_calibration(
                 s.set_color("#d62728")
                 s.set_linewidth(1.6)
 
-    for ax in axes.ravel()[n:]:
+    for ax in flat[n:]:
         ax.axis("off")
 
     fig.suptitle(
@@ -512,9 +657,9 @@ def calibration_by_category(df: pd.DataFrame, config: dict,
         min_category_n=min_category_n,
     )
     for e in entries:
-        e["full_sample"].pop("_tab", None)
-        if e["liquid_sample"] is not None:
-            e["liquid_sample"].pop("_tab", None)
+        for key in ("full_sample", "liquid_sample", "illiquid_sample"):
+            if e[key] is not None:
+                e[key].pop("_tab", None)
 
     qualifying = [e for e in entries if e["interpreted"]]
 
@@ -537,6 +682,7 @@ def calibration_by_category(df: pd.DataFrame, config: dict,
 
     def _row(e: dict) -> dict:
         full, liq = e["full_sample"], e["liquid_sample"]
+        ill = e["illiquid_sample"]
         low = full["longshot"]["low_prob_bins"]
         high = full["longshot"]["high_prob_bins"]
         low_l = liq["longshot"]["low_prob_bins"] if liq else None
@@ -553,6 +699,9 @@ def calibration_by_category(df: pd.DataFrame, config: dict,
             "log_loss": full["log_loss"],
             "brier_liquid": liq["brier"] if liq else None,
             "brier_skill_score_liquid": liq["brier_skill_score"] if liq else None,
+            "n_illiquid": e["n_illiquid"],
+            "brier_illiquid": ill["brier"] if ill else None,
+            "brier_skill_score_illiquid": ill["brier_skill_score"] if ill else None,
             # longshot deltas, full sample and liquid subsample, each with the
             # z against the null that outcomes matched the priced probability
             "delta_low_bins": low["delta"] if low else None,

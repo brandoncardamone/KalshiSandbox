@@ -572,3 +572,136 @@ which is the kind of small dishonesty that costs more than the thing it buys.
 Anyone wanting a genuine `--all` run should expect a different sample and should
 re-derive every downstream number rather than mixing the two.
 
+
+---
+
+## D25 — Follow the implementation spec, not the overview, on storing price series
+
+**Pre-step-10 audit.** The two specs contradict each other outright.
+
+`PROJECT_OVERVIEW.md`, under "Design decisions worth defending":
+
+> **One price per market, not full history.** The research question needs a
+> single forecast per market at a fixed lead time. Storing full candlestick
+> history would be more data for no additional inferential power.
+
+`IMPLEMENTATION_SPEC.md` section 4:
+
+> The `candles` table exists specifically so the project genuinely stores
+> **price series**, not a single snapshot.
+
+and criterion 9 fails the build if `COUNT(*) FROM candles` is not far greater
+than `COUNT(*) FROM markets`.
+
+**Followed the implementation spec.** Three reasons, in order of weight:
+
+1. It is the operative build document — the overview is framing, the spec is
+   instructions, and where they disagree the instructions govern.
+2. The resume bullet says "normalizing outcomes and **price series** into a
+   queryable SQLite store". One row per market would make that clause false and
+   it would have to be struck under section 9.
+3. **The overview contradicts itself.** Its own "Possible extensions" section
+   proposes a horizon sweep "the stored price series already supports without
+   re-ingesting" — which is only true if the history was stored.
+
+Cost of the choice: 141,073 rows instead of 1,983, and a 28 MB database. Trivial,
+and it makes the horizon a free parameter that can be re-swept from disk without
+touching the API.
+
+**Recorded because the contradiction is real and a reader may notice it.** The
+README should not pretend both specs said the same thing.
+
+
+---
+
+## D26 — Headline the full sample, and keep the longshot clause
+
+**Step 10.** Two calls, both Brandon's, both recorded because both could
+reasonably have gone the other way.
+
+**Headline the full sample (n = 1,983), not the liquid subsample (n = 1,661).**
+
+The liquid subsample looks better on every metric — Brier 0.1416 against 0.1558,
+skill +0.313 against +0.196. That is exactly why it is not the headline. The
+`max_spread` threshold that defines it was chosen *after* seeing the full-sample
+results, and leading with a number produced by a post-hoc filter would put the
+project's best face on its least defensible choice.
+
+The full sample is the one nobody got to pick. The liquidity split appears
+immediately below it as a **finding** — which is what it is, and which is more
+interesting than a filter applied before the reader sees anything.
+
+**Keep "e.g., longshot bias" in the resume bullet.**
+
+The risk is that a reader takes the phrasing to mean bias was found, when it was
+not. Rejected the safe edit (deleting the parenthetical) for two reasons: the
+bullet's verb is "quantifying", which is precisely what was done, and being able
+to say "I measured it, it was not there, here is the z-score and here is the
+effect size I could have detected" is a stronger position than having measured
+nothing.
+
+What makes this defensible is not the wording, it is the README: a dedicated
+section, eight tests across both samples and all four categories, and an explicit
+**detection floor** of about 1.9 percentage points derived from the published
+standard error. Without that floor the null would be indistinguishable from an
+underpowered test, and the clause would be doing work the evidence could not
+support.
+
+---
+
+## D27 — Verify the README's numbers mechanically, and fix what it catches
+
+**Step 10.** Criterion 8 says the README quotes only numbers present in
+`results.json`. Checking that by reading is not checking it: the failure mode is a
+figure that was accurate three runs ago and silently is not any more, and it is
+invisible precisely because it looks right.
+
+`verify_readme.py` extracts every numeric token from the README, flattens every
+scalar in `results.json` at several rounding precisions, and fails on anything
+that does not trace. Prose arithmetic and method constants are whitelisted
+individually with a justification each — the list is short on purpose, because a
+long one would defeat the check.
+
+**It failed on the first run, and the failure was real.** The per-category
+illiquid skill scores −0.761, +0.184 and −5.193 appeared in the README and in no
+artifact: `_cat_entry()` scored each category's full and liquid samples but never
+its illiquid one.
+
+**The fix was to publish the numbers, not to whitelist them.** They are results,
+not derived quantities. Whitelisting would have made the check pass while leaving
+exactly the situation criterion 8 forbids — a claim in the README that nothing
+backs. `_cat_entry()` now scores the illiquid block, and it ships in
+`results.json`.
+
+The point worth keeping: I had computed and printed those three numbers myself
+minutes before writing them down, and three of them were untraceable. Careful
+reading would not have caught it.
+
+
+---
+
+## D28 — Write `results.json` before grading the criteria, not after
+
+**Step 10, found while verifying from a clean `outputs/`.** Criterion 8 shells
+out to `verify_readme.py`, which reads `results.json` **off disk**. The original
+`do_analyze_run()` computed the results, evaluated the criteria, and only then
+wrote the file.
+
+So criterion 8 was grading the README against the *previous* run's
+`results.json`. It reported 12/12 and the answer happened to be correct, because
+the two runs produced identical numbers.
+
+It was caught by deleting `outputs/` entirely and running clean: with no stale
+file to read, criterion 8 failed and the total dropped to 11/12.
+
+**Fixed by writing the file twice** — once before the criteria are evaluated, and
+once after, with the acceptance block appended.
+
+**Why this is worth a decision entry rather than a silent fix.** A verification
+step that reads stale state is worse than no verification, because it produces a
+confident pass. This one would have kept reporting 12/12 indefinitely on a
+developer machine, and only ever failed for someone checking out the repo fresh —
+which is precisely the reader the criteria exist to convince. Every acceptance
+run since is done from a deleted `outputs/`, twice in a row, to confirm the result
+does not depend on what was already on disk.
+

@@ -11,81 +11,48 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 
 ---
 
-## ▶ Resume here — last updated 2026-08-24, end of Step 9
+## ▶ Resume here — last updated 2026-08-24, end of Step 10
 
-**Steps 0–9 complete. Only Step 10 remains: README + resume reconciliation + push.**
+**All ten steps complete. The build is finished.** What remains is Brandon's
+commit and push.
 
 State on disk:
 
 | | |
 |---|---|
-| `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running, and re-running it would change the sample |
-| `outputs/` | `calibration.png`, `calibration_by_category.png`, `equity_curve.png`, **`results.json`** |
-| Git | Steps 1–8 committed. **Step 9 is staged, not committed** |
-| Suggested commit | `Step 9 of plan: Wire up analysis CLI and emit results.json` |
-| Credentials | Working. `.env` at repo root, key outside all repos in `../Kalshi backtester/key/` |
+| `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Do **not** re-run the ingest; it would collect a different sample |
+| `outputs/` | `calibration.png`, `longshot_bias.png`, `calibration_by_category.png`, `equity_curve.png`, `results.json` — all regenerate from empty in one command |
+| `README.md` | Written from `results.json`; 303 numbers, all traceable |
+| Acceptance | **12/12, none deferred** |
+| Git | Steps 1–9 committed. **Step 10 is staged, not committed** |
+| Suggested commit | `Step 10 of plan: README, README number verification, resume reconciliation` |
 
-`python run.py --analyze` now runs the whole analysis from SQLite in a few
-seconds, needs no API access, and rewrites `outputs/results.json`.
+### Final headline numbers
 
-### What Step 10 has to do
+| | |
+|---|---|
+| Markets | 1,983 settled, 2026-06-17 to 2026-08-23, 12 series, 4 categories |
+| Brier | **0.1558** vs 0.1937 baseline, skill **+0.196** |
+| Log loss | **0.4634** vs 0.5759 baseline |
+| Longshot bias | **absent** — p ≤ 0.3 delta −0.0112, z = −1.14, not significant |
+| Category skill range | −0.031 (Sports) to +0.562 (Economics) |
+| Backtest | 169 out-of-sample trades, Sharpe/trade −0.074, max drawdown −11.37 |
 
-1. Write `README.md` in the spec's section order: one-line summary → data →
-   method → embedded `calibration.png` → findings in plain English → backtest
-   result → limitations → how to run.
-2. **Quote only numbers present in `results.json`.** That is criterion 8, the one
-   remaining unmet criterion, and the reason `results.json` exists.
-3. Mandatory limitations section — at minimum: small n in tail bins; a few series
-   limits generalization; mid-price is not executable; the 0.07 taker-fee
-   multiplier is assumed; no maker/taker distinction; single horizon tested.
-   **Add to the spec's list:** the `max_spread` filter was chosen after seeing
-   results, the sample is one ~2-month window, and Weather is 45% of it.
-4. Run the section 9 resume reconciliation and strike any unbacked clause.
-5. Push.
+### If this is picked up again
 
-### Resume reconciliation, provisional
+The three most defensible things in the project, and the ones worth being able to
+talk about:
 
-Every clause currently stands. Nothing needs striking on present evidence:
+1. **The liquidity discovery.** A −0.23 mid-range calibration anomaly turned out
+   to be 322 empty books whose midpoints mean nothing. Found by inspection, not
+   by a test failing.
+2. **The backtest's null.** Not "an edge that costs ate" but no edge at all —
+   gross t = +0.26 before any costs. The distinction is the whole point.
+3. **Criterion 8 catching three untraceable numbers** in the README on its first
+   run, all of which I had computed myself minutes earlier.
 
-| Clause | Backed by | Status |
-|---|---|---|
-| "asynchronous data pipeline" | `client.py`, semaphore-capped at 8, verified | ✅ |
-| "RSA-PSS authenticated" | `auth.py` | ✅ |
-| "200+ resolved markets" | 1,983 priced | ✅ |
-| "price series into a queryable SQLite store" | 141,073 candles, criterion 9 | ✅ |
-| "Brier score and log loss" | 0.1558 / 0.4634, both with baselines | ✅ |
-| "quantifying systematic mispricing (e.g., longshot bias)" | Measured and **absent**; see wording note below | ⚠️ |
-| "across event categories" | 4 qualifying categories, criterion 10 | ✅ |
-| "fade-the-mispricing strategy with costs and slippage" | Criterion 11, 537 trades audited | ✅ |
-| "out-of-sample Sharpe and drawdown" | −0.0744 / −11.37, criterion 12 | ✅ |
-
-**The one wording risk is "e.g., longshot bias".** The project *quantified* it —
-which is what the bullet claims — and found it absent (all |z| < 1.6). That is a
-defensible reading, but a reader could take the phrasing to imply it was found.
-Step 10 should decide whether to keep the clause as-is, given the README will
-state the negative result plainly a few lines later. Flagged, not decided.
-
-### Open question for Step 10, not yet decided
-
-Whether the README headlines the **full sample** or the **liquid subsample**.
-Recommendation on file: lead with the full sample and present the liquidity split
-as the finding. Brandon has not ruled.
-
-### Cautions carried forward
-
-1. The `max_spread` filter was chosen **after** seeing results. Legitimate only
-   because the justification is outcome-independent, both samples are reported,
-   and it is a declared CONFIG value. All three must survive into the README.
-2. Weather is 45% of the sample and supplies **479 of the 721** low-probability
-   observations. No aggregate low-probability claim is really a claim about
-   "Kalshi".
-3. The backtest result is negative and **must not be retuned**.
-4. The sample covers a single ~2-month window (2026-06-17 → 2026-08-23) and 12
-   series. It does not generalize to "Kalshi" and the README must not say it does.
-5. `apply_slippage` clamps at 0.99; 104 of 368 full-sample trades got less than
-   the intended 1¢. Measured in `results.json`, disclose in the README.
-6. Two candles-per-market figures exist — **52.0** per discovered market, **71.1**
-   per priced market. Quote whichever, but name the denominator.
+Two things that would need re-deriving if the ingest is ever re-run: every number
+in steps 6–10, and every number in this file.
 
 ---
 
@@ -103,7 +70,7 @@ as the finding. Brandon has not ruled.
 | 7 | Per-category breakdown | ✅ | "across event categories" |
 | 8 | Backtest: costs, slippage, drawdown | ✅ | "costs and slippage", "Sharpe and drawdown" |
 | 9 | `run.py` CLI + `results.json` | ✅ | — (makes everything reproducible) |
-| 10 | README + resume reconciliation + push | ⬜ | verifies **all** claims |
+| 10 | README + resume reconciliation + push | ✅ | verifies **all** claims |
 
 ---
 
@@ -1290,6 +1257,207 @@ slippage is 0.0, never negative — but on 28% of full-sample trades the cost mo
 is softer than advertised. Those trades lost heavily anyway, so the conclusion
 does not depend on it. Published so a reader can see the size of the softness
 instead of taking my word for it.
+
+---
+
+## Full-project audit — before Step 10
+*2026-08-24*
+
+Brandon asked for a complete re-run and a check of everything against both specs
+and the resume bullets before the README is written. Every output was deleted and
+regenerated from scratch via `python run.py --analyze`.
+
+### Two real gaps found and closed
+
+**1. `outputs/longshot_bias.png` was never built.** It is listed in the spec's
+section 1 deliverables tree but appears in none of the twelve acceptance
+criteria, so nothing had flagged it. Built now as `plot_longshot()`: it plots
+`delta = realized − mean_pred` against the priced probability, so perfect
+calibration is the flat zero line and the vertical axis reads directly in
+percentage points of mispricing. The p ≤ 0.3 region is shaded, and the measured
+aggregate result is printed on the chart itself with its z-score — the figure
+states the negative finding rather than leaving a reader to infer it from points
+that look close to a line.
+
+**2. The category chart did not match what section 5.3 asked for.** The spec
+calls for "the reliability diagram with one line per qualifying category over the
+shared diagonal"; Step 7 had built a grid of separate per-category panels
+instead. The grid is better for reading *how* each category deviates, but it
+never lets you compare categories directly, which is what the spec wanted. Both
+now exist: an overlay panel with all four categories on one diagonal, followed by
+the per-category panels.
+
+Neither gap changed a single number. Both were missing output, not wrong output.
+
+### One spec-versus-spec contradiction, resolved and recorded
+
+`PROJECT_OVERVIEW.md` argues under "Design decisions worth defending":
+
+> **One price per market, not full history.** Storing full candlestick history
+> would be more data for no additional inferential power.
+
+`IMPLEMENTATION_SPEC.md` section 4 requires the opposite — the `candles` table
+"exists specifically so the project genuinely stores **price series**" — and
+criterion 9 fails the build if candles are not stored per market.
+
+Resolved in favour of the implementation spec, for three reasons: it is the
+operative build document, the resume bullet says "price series" explicitly, and
+the overview contradicts itself later by listing a horizon sweep under extensions
+"without re-ingesting", which is only possible *because* the history is stored.
+
+### Confirmed deviation, previously recorded
+
+`/historical/markets` is still not used; discovery runs entirely through the live
+`/markets` endpoint and the `tier` column is assigned by comparing `settle_ts` to
+the cutoff, for provenance only. This is [`DECISIONS.md` D12], taken on measured
+evidence that the historical candlestick endpoint returns zero candles. Checked
+that `discover_markets`' own docstring does not claim to page both endpoints —
+it does not.
+
+### Everything verified
+
+| Area | Checks | Result |
+|---|---|---|
+| Spec 0 non-negotiables | RSA-PSS, secrets gitignored, train-only signal | 3/3 |
+| Spec 3.6 rate limiting | Semaphore, 429+5xx, 5 attempts, 0.5s base, jitter | 5/5 |
+| Spec 3.4/3.5 parsing | `period_interval=60`, cutoff, tolerant `_num`, no ÷100, `INSERT OR REPLACE` | 5/5 |
+| Spec 4 categories | propagated from series, `unknown` fallback present | 2/2 |
+| Spec 2 CONFIG | all 11 spec keys present | ✅ |
+| Spec 6 criteria | 11 pass, 1 deferred (README) | 11/11 |
+| Data integrity | 9 checks, see below | 9/9 |
+| Resume clauses | every clause traced to a number | ✅ |
+
+CONFIG carries two keys beyond the spec — `max_spread` and
+`overprice_threshold` — both declared, both documented, both disclosed.
+
+### Data integrity, checked directly against SQLite
+
+- No duplicate tickers; no orphan candle rows.
+- `p_horizon == (yes_bid + yes_ask) / 2` for every priced market, exactly — the
+  mid convention is real, not merely intended.
+- **`horizon_ts <= settle_ts − 86400` for all 1,983 priced markets, zero
+  violations.** A single violation here would be lookahead bias in the
+  calibration itself, upstream of everything.
+- No crossed or out-of-range quotes among priced markets.
+- `result` strictly `yes`/`no`; **zero markets with an `unknown` category**.
+- No candle price above 1 — the cents/dollars bug the spec warns about is absent.
+- `p_horizon` spans 0.0150 to 0.9850, strictly inside (0,1).
+- Sample spans 67 days, 2026-06-17 to 2026-08-23, 12 series, 4 categories.
+
+### Outputs after the audit
+
+`calibration.png`, `longshot_bias.png`, `calibration_by_category.png`,
+`equity_curve.png`, `results.json` — all five regenerate from an empty
+`outputs/` directory in one command, with 11/11 criteria passing.
+
+---
+
+## Step 10 — README, resume reconciliation, push ✅
+*2026-08-24*
+
+### Two calls Brandon made
+
+1. **Headline the full sample**, not the liquid subsample. The liquidity split is
+   presented as a finding inside the calibration section rather than applied
+   before the reader sees anything.
+2. **Keep "e.g., longshot bias"** in the resume bullet, and make the README show
+   clearly that longshot bias was properly accounted for.
+
+Both are recorded in [`DECISIONS.md` D26] and [`QUESTIONS.md` Q9].
+
+### Built
+
+`README.md`, in the spec's mandated section order: one-line summary → data →
+method → embedded `calibration.png` → findings → backtest → limitations → how to
+run. All four charts are embedded.
+
+`verify_readme.py`, which is what makes criterion 8 real.
+
+### Criterion 8, checked mechanically rather than by eye
+
+The spec makes `results.json` the single source of truth the README quotes from.
+That rule is worth nothing if a human checks it, because the failure mode is a
+number that was true three runs ago and quietly is not any more.
+
+`verify_readme.py` extracts every numeric token from the README, flattens every
+scalar in `results.json` (at several rounding precisions), and fails loudly on
+anything that does not trace. Numbers that are legitimately not raw entries —
+arithmetic done in the prose, and method constants — are listed explicitly in the
+script with a one-line justification each.
+
+**Current state: 303 numbers in the README, 195 distinct, all tracing.** The
+check is wired into `check_acceptance()`, so criterion 8 now runs on every
+`--analyze` instead of being asserted.
+
+### It caught a real problem on the first run
+
+Four numbers failed. Three of them — the per-category illiquid skill scores
+**−0.761** (Politics), **+0.184** (Economics) and **−5.193** (Sports) — were in
+the README's category table but **did not exist in `results.json`**. Step 7's
+`_cat_entry()` scored each category's full and liquid samples but never its
+illiquid one.
+
+The tempting fix was to add them to the allowed-derived list. That would have
+been the wrong fix: they are not derived quantities, they are results, and a
+README result that no artifact contains is exactly what criterion 8 exists to
+prevent. `_cat_entry()` now scores the illiquid block too, and the comparison
+rows carry `n_illiquid`, `brier_illiquid` and `brier_skill_score_illiquid`.
+
+The fourth was **14.5**, which genuinely is prose arithmetic — Politics' base rate
+of 0.1446 written as a percentage — and is listed as such.
+
+This is the concrete argument for mechanical verification over careful reading: I
+wrote that table from numbers I had computed and printed to a terminal minutes
+earlier, and three of them were untraceable.
+
+### Acceptance criteria — 12/12, none deferred
+
+Criterion 8 was the last one outstanding. It now passes on real output.
+
+### Resume reconciliation — spec section 9
+
+Nothing was struck. Every clause traces to a verified number:
+
+| Clause | Backed by | Verdict |
+|---|---|---|
+| "asynchronous data pipeline" | `client.py`, `Semaphore(8)`, backoff with jitter | ✅ |
+| "RSA-PSS authenticated" | `auth.py`, verified against the live API in step 1 | ✅ |
+| "200+ resolved markets" | **1,983** priced, criterion 2 | ✅ |
+| "normalizing outcomes" | `result` CHECK constraint, 521 yes / 1,462 no | ✅ |
+| "price series into a queryable SQLite store" | **141,073** candles, criterion 9 | ✅ |
+| "Brier score and log loss" | **0.1558** / **0.4634**, both against baselines | ✅ |
+| "quantifying systematic mispricing (e.g. longshot bias)" | Quantified with z-tests and a stated detection floor; **found absent** | ✅ |
+| "across event categories" | **4** qualifying categories, criterion 10 | ✅ |
+| "fade-the-mispricing strategy" | 169 out-of-sample trades | ✅ |
+| "with costs and slippage" | 537 trades audited, criterion 11 | ✅ |
+| "out-of-sample Sharpe and drawdown" | **−0.0744** / **−11.37**, criterion 12 | ✅ |
+
+### How the longshot clause is defended
+
+This was the one clause at risk, since the honest finding is that longshot bias
+is **not present**. The README defends the wording by making the measurement
+unambiguous rather than by softening it:
+
+- A dedicated section, not a footnote, with its own chart.
+- The method stated: `delta = realized − mean_pred`, tested against the null that
+  outcomes matched the priced rate, bins under n = 20 excluded.
+- Results for both samples **and** all four categories in full — eight tests,
+  every |z| below 1.6, none significant.
+- **A stated detection floor.** The published standard error of 0.0098 means the
+  test could have caught a bias of about 1.9 percentage points, which is smaller
+  than the effect reported in the racetrack literature. This is the sentence that
+  makes the null a real result rather than an underpowered one, and it is what
+  makes "quantifying" defensible.
+- The honest summary: negative in all four categories, which is the right
+  direction, but ~1–2 points and inside the noise. **Directionally consistent,
+  statistically absent.**
+
+A reader who checks the bullet against the README finds a thorough measurement
+and a clearly stated null, not a claim that bias was found.
+
+### Not done here
+
+The **push** is Brandon's, as every commit in this project has been.
 
 ---
 

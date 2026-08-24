@@ -256,3 +256,39 @@ a t-statistic of **+0.26**, meaning there was no exploitable mispricing at a
 (README + resume reconciliation + push). Step 9 blocks Step 10, because the
 README may only quote numbers that exist in `results.json`.
 
+---
+
+## Q9 — Full sample or liquid subsample in the README, and keep the longshot clause?
+*2026-08-24, before Step 10*
+
+Two decisions were put to Brandon before the README was written, because both
+change what the project claims rather than how it is worded.
+
+**Decision 1 — headline the full sample.** Brandon chose the full sample
+(n = 1,983, Brier 0.1558) over the liquid subsample (n = 1,661, Brier 0.1416),
+matching the recommendation on file.
+
+*Why it matters:* the liquid subsample looks better on every metric, but its
+defining threshold was chosen after seeing results. Leading with it would headline
+the project's least defensible choice. The full sample is the one nobody selected.
+The liquidity split is presented as a finding immediately below.
+
+**Decision 2 — keep "e.g., longshot bias", and make the README show it was
+accounted for.** Brandon chose to keep the clause.
+
+*Why it matters:* the honest finding is that longshot bias is **absent**. The
+clause says "quantifying systematic mispricing (e.g., longshot bias)", and
+quantifying is exactly what happened — but a reader could take it as a claim that
+bias was found.
+
+*How the README defends it:* a dedicated section with its own chart; the method
+stated explicitly; results for both samples and all four categories, eight tests
+in total, every |z| below 1.6; and — the load-bearing part — a stated **detection
+floor**. The published standard error of 0.0098 means the test could have found a
+bias of about 1.9 percentage points, smaller than the effect the racetrack
+literature reports. That sentence converts the result from "we did not find
+anything" into "an effect of the usual size would have shown up here and did not",
+which is a finding rather than an absence of one.
+
+Both decisions are recorded in [`DECISIONS.md` D26].
+

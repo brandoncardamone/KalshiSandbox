@@ -205,11 +205,31 @@ def check_acceptance(results: dict, out_dir: str = "outputs") -> dict:
         "verified in .gitignore; the private key itself lives outside every git "
         "repository, in ../Kalshi backtester/key/")
 
-    checks["c8_readme_quotes_results"] = _crit(
-        False, "README quotes only numbers present in results.json",
-        "DEFERRED TO STEP 10 -- the README does not exist yet. This is the only "
-        "criterion not yet met, and it is the whole content of the next step",
-        deferred=True)
+    # Checked mechanically, not by eye: verify_readme.py extracts every numeric
+    # token from README.md and looks for it in the flattened results. The failure
+    # mode this guards against is a number that was true three runs ago.
+    readme = os.path.join(os.path.dirname(out_dir) or ".", "README.md")
+    if not os.path.exists(readme):
+        checks["c8_readme_quotes_results"] = _crit(
+            False, "README quotes only numbers present in results.json",
+            "README.md does not exist yet", deferred=True)
+    else:
+        try:
+            import subprocess
+            import sys as _sys
+            r = subprocess.run([_sys.executable, "verify_readme.py"],
+                               capture_output=True, text=True, timeout=120)
+            tail = (r.stdout or "").strip().splitlines()
+            checks["c8_readme_quotes_results"] = _crit(
+                r.returncode == 0,
+                "README quotes only numbers present in results.json",
+                (tail[-2] if r.returncode == 0 and len(tail) >= 2
+                 else "verify_readme.py reported untraceable numbers -- run it "
+                      "directly for the list"))
+        except Exception as exc:  # pragma: no cover - diagnostic path
+            checks["c8_readme_quotes_results"] = _crit(
+                False, "README quotes only numbers present in results.json",
+                f"could not run verify_readme.py: {exc}")
 
     cr = counts["candle_rows"]
     checks["c9_price_series"] = _crit(
@@ -395,11 +415,20 @@ def do_analyze_run(config: dict, out_dir: str = "outputs") -> dict:
 
     os.makedirs(out_dir, exist_ok=True)
     results = build_results(config, out_dir)
-    results["acceptance"] = check_acceptance(results, out_dir)
-
     path = os.path.join(out_dir, "results.json")
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(results, fh, indent=2, sort_keys=False)
+
+    def _dump():
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(results, fh, indent=2, sort_keys=False)
+
+    # Written BEFORE the criteria are evaluated, then rewritten with the
+    # acceptance block appended. Criterion 8 shells out to verify_readme.py,
+    # which reads results.json off disk -- so checking first would silently grade
+    # the README against the PREVIOUS run's file. That is not hypothetical: it
+    # passed that way until outputs/ was deleted and the run started clean.
+    _dump()
+    results["acceptance"] = check_acceptance(results, out_dir)
+    _dump()
 
     cal, cat, bt = results["calibration"], results["by_category"], results["backtest"]
     liq = bt["liquid_subsample"]
