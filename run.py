@@ -54,6 +54,12 @@ CONFIG = {
     "max_spread":        0.20,
     "min_category_n":    40,          # categories below this are not interpreted
     "train_frac":        0.6,         # time-ordered train/test split for backtest
+
+    # A training-window bin counts as overpriced when outcomes arrived this
+    # much less often than the price implied. Fixed at the spec value before
+    # the test window was touched, and never retuned -- moving it after seeing
+    # the out-of-sample result is precisely the lookahead the split prevents.
+    "overprice_threshold": 0.03,
     "slippage_cents":    1.0,         # adverse execution assumption, on top of spread
     "max_concurrency":   8,
     "db_path":           "kalshi.db",

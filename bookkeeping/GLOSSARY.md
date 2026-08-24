@@ -301,6 +301,20 @@ Jump to: [Prediction markets](#1-prediction-markets) · [The Kalshi API](#2-the-
 
 **Unit position size** — assuming exactly one contract per trade. Position sizing is out of scope, so drawdown is reported at unit size and said so.
 
+**Break-even hit rate** — how often a trade must win just to cover its own price. A NO contract bought at 0.71 with a 1.4¢ fee needs to win **72.5%** of the time to break even; it won 69.2%. Reporting this next to the raw hit rate is what turns "we won 69% of trades" from a boast into a measurement — the strategy was **3.2 percentage points** short.
+
+**Gross PnL at the mid** — what a trade would have earned executing at the midpoint with no spread, no slippage, and no fee. The fantasy version. Reported alongside the real figure so the three cost terms can be shown to account exactly for the difference between them.
+
+**Cost attribution** — splitting the gap between gross and net into its parts (spread, slippage, fee) so a reader can see which one did the damage. Here the spread did essentially all of it: −0.2199 of a −0.2400 total on the full sample.
+
+**t-statistic** — mean divided by its standard error, for a quantity that can be positive or negative (like PnL). Same idea as a z-score, used where the standard error is estimated from the sample. **|t| ≥ 1.96** is the conventional 5% bar. This is the single most important number in the backtest: the liquid subsample's gross edge of +0.0086 per contract has **t = +0.26**, meaning it is not a small edge but **no edge at all**.
+
+**`overprice_threshold`** — how far below its price a bin's realized rate must fall (**0.03**) before the strategy will trade it. A declared CONFIG value fixed at the spec's number before the test window was touched. **Never retuned** — moving it after seeing the out-of-sample result is precisely the lookahead the train/test split exists to prevent, and would invalidate every number in the step.
+
+**Scramble test** — the strongest lookahead check available. Randomly permute every *test*-window outcome and re-derive the signal. If the signal could see the future in any way, destroying the future would change it. Here the selected bins come back byte-identical, on both samples.
+
+**Absolute vs fractional drawdown** — the largest peak-to-trough fall measured in dollars per contract, versus as a percentage of a peak. The fractional form needs a starting capital this project does not assume; on a cumulative-PnL curve that starts at 0 it divides by zero and inverts its sign whenever the curve is under water. Measured here: the fractional form returned **−459** on a curve whose peak was 4 cents. The absolute figure (**−11.37** per contract, liquid) is the one to quote.
+
 ---
 
 ## 8. Git & version control

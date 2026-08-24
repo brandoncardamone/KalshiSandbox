@@ -11,34 +11,32 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started · ⚠️ done with cave
 
 ---
 
-## ▶ Resume here — last updated 2026-08-23, end of Step 7
+## ▶ Resume here — last updated 2026-08-23, end of Step 8
 
-**Steps 0–7 complete. Next is Step 8 (backtest with costs and slippage).**
+**Steps 0–8 complete. Next is Step 9 (`run.py --analyze` + `outputs/results.json`).**
 
 State on disk:
 
 | | |
 |---|---|
 | `kalshi.db` | **28 MB** — 2,715 markets, **1,983 priced**, 141,073 candle rows. Ingest does **not** need re-running |
-| `outputs/` | `calibration.png`, `calibration_by_category.png` |
-| Git | Steps 1–6 committed through `5296e92`, unpushed. **Step 7 is staged, not committed** |
-| Suggested commit | `Step 7 of plan: Per-category calibration breakdown` |
+| `outputs/` | `calibration.png`, `calibration_by_category.png`, `equity_curve.png` |
+| Git | Steps 1–7 committed. **Step 8 is staged, not committed** |
+| Suggested commit | `Step 8 of plan: Backtest with costs, slippage, Sharpe and drawdown` |
 | Credentials | Working. `.env` at repo root, key outside all repos in `../Kalshi backtester/key/` |
 
-Re-running `python run.py --ingest` is safe and idempotent but unnecessary —
-every write is an `INSERT OR REPLACE`, so it would simply rebuild the same rows.
-Analysis reads from SQLite and needs no API access at all. Note `run.py
---analyze` is **still not wired up**; that is Step 9. Until then the analysis
-functions are called directly from Python.
+`run.py --analyze` is **still not wired up** — that is Step 9, and it is the last
+piece of real work. Until then the analysis functions are called directly from
+Python. `results.json` does not exist yet; Step 10's README must quote only from
+it, so Step 9 blocks Step 10.
 
-### The four results that matter so far
+### The five results that matter
 
 **1. Headline calibration** (full sample, n=1,983): Brier **0.1558** vs baseline
-0.1937, log loss **0.4634** vs 0.5759, skill score **+0.196**, base rate 0.2627.
+0.1937, log loss **0.4634** vs 0.5759, skill **+0.196**, base rate 0.2627.
 
 **2. Liquidity is the dominant story.** 322 of 1,983 markets (16.2%) are empty
-books quoted around 0.045 / 0.906, mean spread **0.861**. Their midpoints land
-near 0.5 and faked a −0.23 mid-range mispricing. Split out:
+books quoted around 0.045 / 0.906, mean spread **0.861**:
 
 | Sample | n | Brier | Skill |
 |---|---|---|---|
@@ -46,41 +44,45 @@ near 0.5 and faked a −0.23 mid-range mispricing. Split out:
 | Liquid (spread ≤ 0.20) | 1,661 | 0.1416 | **+0.313** |
 | Illiquid (> 0.20) | 322 | 0.2289 | **−1.150** |
 
-Step 7 localized this: **7 of 12 series have zero illiquid markets**, and
-`KXARGNACBSPREAD` alone supplies 254 of the 322. It is a few nameable series
-with no order book, not a gradient across the exchange.
+**7 of 12 series have zero illiquid markets**; `KXARGNACBSPREAD` alone supplies
+254 of the 322.
 
-**3. Longshot bias was NOT found**, in aggregate or in any single category. All
-eight tested deltas have |z| < 1.6. Consistent in *sign* at low probabilities
-(negative in all four categories) but ~1 percentage point in size — too small to
-trade and too small to claim. Reported as a negative result. See [`DECISIONS.md`
-D16, D18].
+**3. Longshot bias was NOT found**, in aggregate or in any category. All eight
+tested deltas have |z| < 1.6. See [`DECISIONS.md` D16, D18].
 
-**4. Calibration varies a lot by category** — skill from **−0.031** (Sports) to
-**+0.562** (Economics), a spread three times the aggregate figure. Sports is
-negative only because of the illiquid `KXARGNACBSPREAD` block; on liquid markets
-it is +0.224. See [`DECISIONS.md` D17].
+**4. Calibration varies by category** — skill from **−0.031** (Sports) to
+**+0.562** (Economics). Sports is negative only because of the illiquid
+`KXARGNACBSPREAD` block; on liquid markets it is +0.224. See [D17].
+
+**5. The backtest loses money, and the reason is that there was nothing to
+harvest.** Liquid subsample: 169 out-of-sample trades, Sharpe/trade **−0.074**,
+max drawdown **−11.37** per contract, mean **−0.0325**/contract. The gross edge
+*before any costs* is +0.0086 with **t = +0.26** — indistinguishable from zero.
+The full sample's huge apparent gross edge (+0.199, t = +9.03) is the empty-book
+artifact and is erased almost exactly by the spread cost of −0.2199. See [D20,
+D21, D22].
 
 ### Open question for Step 10, not yet decided
 
 Whether the README headlines the **full sample** or the **liquid subsample**.
 Recommendation on file: lead with the full sample and present the liquidity split
-as the finding. Brandon has not ruled. Does not block Steps 8–9.
+as the finding. Brandon has not ruled.
 
 ### Cautions carried forward
 
-1. Mean spread at the horizon is **16.1 cents** across the full sample (2.6
-   cents among liquid markets). Any backtest edge must survive crossing that plus
-   fees. Expect Step 8 to come back negative; that ships as-is.
-2. Step 8 selects its overpriced bins on **train data only**. With longshot bias
-   measured as absent, the honest expectation is that the strategy finds little
-   or nothing to trade. Do not widen the rule to manufacture trades.
-3. The `max_spread` filter was chosen **after** seeing results. Legitimate only
+1. The `max_spread` filter was chosen **after** seeing results. Legitimate only
    because the justification is outcome-independent, both samples are reported,
    and it is a declared CONFIG value. All three must survive into the README.
-4. Weather is 45% of the sample and supplies **479 of the 721** low-probability
+2. Weather is 45% of the sample and supplies **479 of the 721** low-probability
    observations. No aggregate low-probability claim is really a claim about
    "Kalshi" — it is mostly a claim about three cities' temperature markets.
+3. The backtest result is negative and **must not be retuned**. `overprice_threshold`
+   stays at 0.03. Anyone revisiting this: changing it after seeing the test result
+   is the exact failure the split exists to prevent.
+4. The sample covers a single ~2-month window (2026-06-17 → 2026-08-23) and 12
+   series. It does not generalize to "Kalshi" and the README must not say it does.
+5. `apply_slippage` clamps at 0.99, which made the model *less* punitive than
+   intended on the worst empty-book trades. Disclosed in the Step 8 section.
 
 ---
 
@@ -96,7 +98,7 @@ as the finding. Brandon has not ruled. Does not block Steps 8–9.
 | 5 | Price-series fetch + full ingest run | ✅ | "price series", "200+ resolved markets" |
 | 6 | Calibration core | ✅ | "Brier score and log loss", "longshot bias" |
 | 7 | Per-category breakdown | ✅ | "across event categories" |
-| 8 | Backtest: costs, slippage, drawdown | ⬜ | "costs and slippage", "Sharpe and drawdown" |
+| 8 | Backtest: costs, slippage, drawdown | ✅ | "costs and slippage", "Sharpe and drawdown" |
 | 9 | `run.py` CLI + `results.json` | ⬜ | — (makes everything reproducible) |
 | 10 | README + resume reconciliation + push | ⬜ | verifies **all** claims |
 
@@ -1006,24 +1008,156 @@ drawn.
 
 ---
 
-## Step 8 — Backtest ⬜
+## Step 8 — Backtest ✅
+*2026-08-23*
 
-Sort by `settle_ts`, split at the 0.6 quantile. Identify overpriced bins on
-**train only** (`realized < mean_pred − 0.03`, `n ≥ 20`), trade only the held-out
-window. That ordering is the entire defence against lookahead bias.
+Trades the mispricing the calibration work found, pays realistic costs for it,
+and reports what is left. Backs the third resume bullet in full.
 
-- `apply_slippage()` — NO entry at `1 − yes_bid` (crossing the spread, *not*
-  `1 − yes_ask`), then 1¢ further adverse, clamped to 0.99
-- `taker_fee()` — `ceil(0.07 × C × P × (1−P))` to the next cent
-- `max_drawdown()` on the sequential unit-size equity curve
-- `sharpe_per_trade = mean(pnl) / std(pnl)`, stored under exactly that key,
-  **never annualized**
-- `outputs/equity_curve.png`
+### Built
 
-If `n_trades < 30`, flagged "not statistically meaningful" but still reported.
-**If mean PnL is negative after costs, that ships as the result.** Tuning the
-threshold until it turns positive would reintroduce exactly the bias the
-train/test split exists to prevent.
+In `analyze.py`:
+
+| Function | What it does |
+|---|---|
+| `taker_fee(price, contracts)` | `ceil(0.07 × contracts × p × (1−p) × 100)/100`. Rounds **up**, so the cost model never flatters itself |
+| `apply_slippage(quoted, cents)` | Adds 1¢ adverse to an already spread-crossed price, clamped to 0.99 |
+| `max_drawdown(equity)` | Largest peak-to-trough fall of the cumulative PnL curve, in dollars per contract |
+| `max_drawdown_fraction(equity)` | The spec's ratio form, guarded — see D20 |
+| `select_overpriced_bins(train, config)` | The signal. Takes `train` as its **only** data argument so it cannot see test |
+| `backtest(df, config)` | Split, select, trade, score |
+| `run_backtest(df, config)` | Runs the full sample and the liquid subsample, emits `outputs/equity_curve.png` |
+
+`overprice_threshold: 0.03` was added to CONFIG — the spec hard-coded it, and a
+declared value that can be audited is better than a magic number buried in a
+function. It was fixed at the spec's value **before** the test window was
+touched and has never been changed since.
+
+### The strategy
+
+Split the sample by time at the 0.6 quantile of `settle_ts`. On the **training
+window only**, find bins where outcomes arrived materially less often than the
+price implied (`realized < mean_pred − 0.03`, `n ≥ 20`). Then, on the **test
+window only**, buy one NO contract in every market priced into one of those bins.
+
+Entry is deliberately pessimistic, and it is where most backtests cheat:
+
+- **Cross the spread.** A NO contract costs `1 − yes_bid`, not `1 − yes_ask` and
+  certainly not `1 − mid`. You pay what someone will actually deal at.
+- **Then take slippage.** A further 1¢ adverse, for latency and for the effect of
+  the order on a thin book.
+- **Then pay the fee**, rounded up to the next cent.
+
+### Lookahead audit
+
+The first thing a knowledgeable reader attacks. Five checks, all passing on both
+samples:
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Every trade settles strictly after the split timestamp | ✅ |
+| 2 | Train and test share no ticker | ✅ |
+| 3 | Train + test accounts for the whole sample | ✅ |
+| 4 | Bin selection reproducible from the train slice alone | ✅ |
+| 5 | **Bin selection unchanged when every test outcome is randomly scrambled** | ✅ |
+
+Check 5 is the decisive one. If the signal could see the future in any way,
+destroying the future would change it. It does not change it — the selected bins
+come back byte-identical.
+
+### Results — both negative, reported as they came
+
+| | full sample | liquid subsample |
+|---|---|---|
+| split date | 2026-08-05 | 2026-08-02 |
+| train / test | 1,200 / 783 | 999 / 662 |
+| **n_trades** | **368** | **169** |
+| hit rate | 0.7908 | 0.6923 |
+| break-even hit rate needed | 0.8319 | 0.7248 |
+| shortfall | **−4.1 pp** | **−3.2 pp** |
+| mean entry price | 0.8189 | 0.7107 |
+| mean PnL / contract | **−0.0411** | **−0.0325** |
+| t-stat on net PnL | −2.06 (**significant**) | −0.97 (not significant) |
+| total PnL | −15.13 | −5.49 |
+| **Sharpe per trade** | **−0.108** | **−0.074** |
+| **max drawdown** | **−18.37** | **−11.37** |
+| statistically meaningful (n ≥ 30) | yes | yes |
+
+Both lose money. That is the honest outcome and it ships as-is — the spec is
+explicit that tuning parameters until the number turns positive would reintroduce
+exactly the lookahead the train/test split exists to prevent. Nothing was retuned.
+
+Sharpe is **per trade**, never annualized. Drawdown is in **dollars per contract
+at unit size**, because position sizing is out of scope and there is no bankroll
+to take a percentage of.
+
+### 🔴 Where the edge went — the cost attribution
+
+The strategy wins 69% of its trades and still loses money. That needs explaining
+rather than asserting, so every trade is scored twice: once at the midpoint with
+no costs (the fantasy version) and once as actually modelled. The three cost
+terms reconcile the two exactly.
+
+| dollars per contract | full sample | liquid subsample |
+|---|---|---|
+| gross PnL at the mid | **+0.1989** | **+0.0086** |
+| − spread cost | −0.2199 | −0.0174 |
+| − slippage | −0.0072 | −0.0096 |
+| − taker fee | −0.0130 | −0.0141 |
+| **= net PnL** | **−0.0411** | **−0.0325** |
+| t-stat on the *gross* edge | **+9.03 (significant)** | **+0.26 (not significant)** |
+
+**Two completely different stories, and the t-stats are what separate them.**
+
+*Full sample:* a large, statistically overwhelming apparent edge of +0.199 per
+contract — and it is **entirely fake**. It is the empty-book artifact from Step 6
+in trading form: the midpoint says 0.50, so fading it looks enormously
+profitable, but a NO contract on those books costs `1 − 0.016 = 0.984`. The
+spread cost of −0.2199 erases the +0.1989 almost exactly, because they are the
+same number seen from two sides. Risking $1.00 to win $0.00.
+
+*Liquid subsample:* the gross edge is **+0.0086 with t = +0.26**. That is not a
+small edge — it is **no edge at all**, indistinguishable from zero. Costs of 4.1¢
+then turn nothing into a loss.
+
+So the finding is not "there was an edge and costs ate it." It is stronger and
+less flattering: **at a 24-hour horizon, on liquid markets, there was no
+exploitable mispricing to begin with**, and the apparent one in the full sample
+was an artifact of markets nobody was quoting. This is consistent with the whole
+project — Step 7 found no significant longshot bias in any category, and a
+strategy cannot harvest a bias that is not there.
+
+### A note against my own cost model
+
+The 1¢ slippage cost came out to only **−0.0072** on the full sample, below the
+1¢ intended, because `apply_slippage` clamps entry at 0.99 and many empty-book
+entries were already at 0.984. The clamp made the model *less* punitive on
+exactly the trades that most deserved punishment — and those trades still lost
+heavily. The conclusion is not sensitive to it, but the clamp is a real softness
+in the model and is recorded here rather than left to be discovered.
+
+### Output
+
+`outputs/equity_curve.png` — two panels, 150 dpi.
+
+- **Left:** net cumulative PnL for both samples over the out-of-sample window,
+  with break-even drawn. Both curves descend.
+- **Right:** the liquid subsample's trades scored at the mid (green) against as
+  modelled (blue), with the widening gap shaded. That shaded wedge is the cost of
+  trading, and the fact that the green line also hovers around zero is the real
+  finding.
+
+### Resume bullet 3, checked clause by clause
+
+| Clause | Backed by | Verdict |
+|---|---|---|
+| "Backtested a fade-the-mispricing strategy" | `backtest()`, 368 / 169 out-of-sample trades | ✅ |
+| "with costs and slippage" | `taker_fee` + spread crossing + `apply_slippage`, attributed separately | ✅ |
+| "reporting out-of-sample Sharpe" | `sharpe_per_trade` −0.108 / −0.074, test window only | ✅ |
+| "and drawdown" | `max_drawdown` −18.37 / −11.37 per contract | ✅ |
+
+All four clauses stand. Nothing needs striking from bullet 3. The numbers are
+negative, which is a result, not a failure to produce one.
 
 ---
 

@@ -9,6 +9,7 @@ up.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 
 import matplotlib
@@ -582,3 +583,365 @@ def calibration_by_category(df: pd.DataFrame, config: dict,
         "skill_dispersion_liquid": _dispersion("liquid_sample"),
         "categories": entries,
     }
+
+
+# --------------------------------------------------------------------------
+# Backtest: costs, slippage, drawdown  (step 8)
+# --------------------------------------------------------------------------
+
+
+def taker_fee(price: float, contracts: int = 1) -> float:
+    """Kalshi taker fee, rounded UP to the next cent.
+
+    fee = ceil(0.07 * contracts * price * (1 - price) * 100) / 100
+
+    Peaks at $0.0175 per contract at a price of 0.50 and falls toward zero at
+    both extremes, because a contract at 0.98 has little value at risk.
+
+    ASSUMPTION, and it must stay disclosed: the general 0.07 multiplier is used
+    for every market. Kalshi charges different multipliers for some categories.
+    The series objects fetched during discovery carry a `fee_multiplier` field,
+    so this is verifiable rather than merely assumed -- see the disclosure in the
+    README. Rounding up (never down) keeps the cost model pessimistic.
+    """
+    return math.ceil(0.07 * contracts * price * (1 - price) * 100) / 100
+
+
+def apply_slippage(quoted_price: float, slippage_cents: float) -> float:
+    """Make the execution price strictly worse than the quote.
+
+    Backs the resume phrase "costs and slippage". Two separate components, and
+    both are applied:
+
+      1. SPREAD COST -- handled by the caller, which passes `1 - yes_bid` for a
+         NO position rather than `1 - yes_ask`. That is crossing the spread:
+         paying what someone will actually deal at, not the flattering midpoint.
+         Assuming execution at the mid is the single most common way a backtest
+         lies to itself.
+      2. IMPACT / LATENCY -- this function: a further `slippage_cents` adverse to
+         that price, for the delay between deciding and trading and for the
+         effect of the order itself on a thin book.
+
+    Clamped to 0.99 so the entry stays a valid contract price.
+    """
+    return min(quoted_price + slippage_cents / 100.0, 0.99)
+
+
+def max_drawdown(equity: np.ndarray) -> float:
+    """Largest peak-to-trough decline of a cumulative PnL curve.
+
+    Returned in the curve's own units -- dollars per contract at unit size --
+    and always <= 0.
+
+    DEVIATION FROM THE SPEC, deliberate. Spec section 5.4 defines this as
+    `min(equity / peak - 1)`, which is the right formula for a NAV curve that
+    starts at some positive value. This curve is cumulative profit and starts at
+    exactly 0, so that formula divides by zero on the first trade, and inverts
+    its sign for every stretch where cumulative PnL is negative. The absolute
+    peak-to-trough decline needs no starting-capital assumption, and this project
+    makes none: position sizing is out of scope, so there is no bankroll to take
+    a percentage of. `max_drawdown_fraction()` keeps the spec's form for anyone
+    who wants it, guarded.
+
+    The running peak starts at 0, not at the first trade, so a curve that only
+    ever loses money is measured from where it began rather than from its first
+    (already negative) point.
+    """
+    equity = np.asarray(equity, dtype=float)
+    if equity.size == 0:
+        return 0.0
+    peak = np.maximum.accumulate(np.concatenate([[0.0], equity]))[1:]
+    return float(np.min(equity - peak))
+
+
+def max_drawdown_fraction(equity: np.ndarray) -> float | None:
+    """The spec's `min(equity/peak - 1)`, evaluated only where it is defined.
+
+    Restricted to points where the running peak is strictly positive. Returns
+    None when the curve never rises above its starting 0, which is exactly the
+    case where the ratio form has no meaning.
+    """
+    equity = np.asarray(equity, dtype=float)
+    if equity.size == 0:
+        return None
+    peak = np.maximum.accumulate(np.concatenate([[0.0], equity]))[1:]
+    ok = peak > 0
+    if not ok.any():
+        return None
+    return float(np.min(equity[ok] / peak[ok] - 1.0))
+
+
+def select_overpriced_bins(train: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Bins the TRAIN window says are overpriced. Never sees test data.
+
+    A bin qualifies when outcomes arrived materially less often than the price
+    implied (`realized < mean_pred - overprice_threshold`) on a sample large
+    enough to mean something (`n >= min_bin_n`). Both conditions are declared
+    CONFIG values, fixed before the test window is touched.
+
+    This function is the whole defence against lookahead bias, which is the
+    first thing a knowledgeable reader checks for. It takes `train` as its only
+    data argument specifically so that it *cannot* see the test set.
+    """
+    tab = calibration_table(train, config["n_bins"])
+    return tab[(tab["realized"] < tab["mean_pred"] - config["overprice_threshold"])
+               & (tab["n"] >= config["min_bin_n"])]
+
+
+def backtest(df: pd.DataFrame, config: dict) -> dict:
+    """Fade the mispricing: buy NO where the training window says YES is dear.
+
+    1. Sort by settle_ts and split at the train_frac quantile, by TIME.
+    2. Pick overpriced bins on TRAIN ONLY.
+    3. On TEST ONLY, buy one NO contract in every market whose p_horizon lands
+       in one of those bins. Entry crosses the spread and then takes slippage.
+    4. Score the trades in settlement order.
+
+    Every reported metric is out-of-sample by construction: step 2 touches only
+    markets that had already settled before the split timestamp.
+
+    Returns the metrics plus the trade-by-trade frame under "_trades", which the
+    plot needs and the caller drops before serializing.
+    """
+    d = df.sort_values("settle_ts").reset_index(drop=True)
+    split_ts = float(d["settle_ts"].quantile(config["train_frac"]))
+    train = d[d["settle_ts"] <= split_ts]
+    test = d[d["settle_ts"] > split_ts]
+
+    sel = select_overpriced_bins(train, config)
+    edges = np.linspace(0.0, 1.0, config["n_bins"] + 1)
+
+    base = {
+        "split_ts": int(split_ts),
+        "n_train": int(len(train)),
+        "n_test": int(len(test)),
+        "train_frac": config["train_frac"],
+        "overprice_threshold": config["overprice_threshold"],
+        "slippage_cents": config["slippage_cents"],
+        "fee_multiplier_assumed": 0.07,
+        "bins_selected_on_train": [
+            {
+                "range": "{:.1f}-{:.1f}".format(r.bin_lo, r.bin_hi),
+                "mean_pred": round(float(r.mean_pred), 4),
+                "realized": round(float(r.realized), 4),
+                "delta": round(float(r.delta), 4),
+                "n_train": int(r.n),
+            }
+            for r in sel.itertuples()
+        ],
+    }
+
+    if sel.empty:
+        return {**base, "n_trades": 0,
+                "note": "no bin in the training window met the overpricing "
+                        "threshold; the strategy takes no position",
+                "statistically_meaningful": False, "_trades": None}
+
+    idx = np.clip(np.digitize(test["p_horizon"], edges, right=False) - 1,
+                  0, config["n_bins"] - 1)
+    trades = test[np.isin(idx, sel.index.to_numpy())].copy()
+
+    if trades.empty:
+        return {**base, "n_trades": 0,
+                "note": "training window selected bins, but no test market "
+                        "priced into them",
+                "statistically_meaningful": False, "_trades": None}
+
+    # Cross the spread: a NO contract costs 1 - yes_bid, not 1 - yes_ask.
+    trades["quoted"] = 1.0 - trades["yes_bid"]
+    trades["entry"] = trades["quoted"].apply(
+        lambda q: apply_slippage(q, config["slippage_cents"]))
+    trades["fee"] = trades["entry"].apply(taker_fee)
+    trades["payout"] = (trades["outcome"] == 0).astype(float)
+    trades["pnl"] = trades["payout"] - trades["entry"] - trades["fee"]
+    trades = trades.sort_values("settle_ts").reset_index(drop=True)
+    trades["equity"] = trades["pnl"].cumsum()
+
+    # Cost attribution. gross is what the trade would have earned executing at
+    # the midpoint with no fee -- the fantasy version. The three cost terms below
+    # sum exactly to the gap between that and the real pnl, which is the whole
+    # point of the "with costs and slippage" claim: it should be possible to see
+    # how much each one took.
+    trades["gross_pnl_at_mid"] = trades["payout"] - (1.0 - trades["p_horizon"])
+    trades["cost_spread"] = trades["quoted"] - (1.0 - trades["p_horizon"])
+    trades["cost_slippage"] = trades["entry"] - trades["quoted"]
+
+    pnl = trades["pnl"].to_numpy()
+    equity = trades["equity"].to_numpy()
+    sd = float(np.std(pnl, ddof=1)) if len(pnl) > 1 else 0.0
+    n_trades = int(len(trades))
+
+    # A NO contract bought at `entry` pays 1.0 or 0.0, so the trade only makes
+    # money if it wins more often than entry + fee. Comparing the achieved hit
+    # rate to that threshold says whether the strategy was close or not close.
+    breakeven = float((trades["entry"] + trades["fee"]).mean())
+    peak_equity = float(np.maximum.accumulate(np.concatenate([[0.0], equity]))[-1])
+
+    def _t(x):
+        """t-statistic of a mean PnL against zero. Without this a mean of
+        +0.0086 per contract reads as a small edge when it is in fact
+        indistinguishable from no edge whatsoever."""
+        x = np.asarray(x, dtype=float)
+        if x.size < 2:
+            return None
+        se = float(np.std(x, ddof=1)) / math.sqrt(x.size)
+        return round(float(np.mean(x)) / se, 2) if se else None
+
+    t_net = _t(pnl)
+    t_gross = _t(trades["gross_pnl_at_mid"].to_numpy())
+
+    return {
+        **base,
+        "n_trades": n_trades,
+        "hit_rate": round(float(trades["payout"].mean()), 4),
+        "breakeven_hit_rate": round(breakeven, 4),
+        "hit_rate_shortfall": round(float(trades["payout"].mean()) - breakeven, 4),
+        "mean_entry_price": round(float(trades["entry"].mean()), 4),
+        "mean_fee": round(float(trades["fee"].mean()), 4),
+        "mean_slippage_cost": round(
+            float((trades["entry"] - (1.0 - trades["p_horizon"])).mean()), 4),
+        "mean_gross_pnl_at_mid": round(float(trades["gross_pnl_at_mid"].mean()), 4),
+        "mean_cost_spread": round(float(trades["cost_spread"].mean()), 4),
+        "mean_cost_slippage": round(float(trades["cost_slippage"].mean()), 4),
+        "mean_cost_fee": round(float(trades["fee"].mean()), 4),
+        "mean_pnl_per_contract": round(float(np.mean(pnl)), 4),
+        "t_stat_gross_at_mid": t_gross,
+        "gross_edge_significant_5pct": bool(t_gross is not None and abs(t_gross) >= 1.96),
+        "t_stat_net": t_net,
+        "net_pnl_significant_5pct": bool(t_net is not None and abs(t_net) >= 1.96),
+        "total_pnl": round(float(np.sum(pnl)), 4),
+        "std_pnl": round(sd, 4),
+        "sharpe_per_trade": round(float(np.mean(pnl) / sd), 4) if sd else None,
+        "max_drawdown": round(max_drawdown(equity), 4),
+        "peak_equity": round(peak_equity, 4),
+        "max_drawdown_fraction": (
+            round(max_drawdown_fraction(equity), 4)
+            if max_drawdown_fraction(equity) is not None else None),
+        # The spec's ratio form divides by the running peak. When the curve
+        # barely clears zero before falling, that peak is a few cents and the
+        # ratio explodes into a meaningless number. Quote `max_drawdown`.
+        "max_drawdown_fraction_reliable": bool(peak_equity >= 1.0),
+        "final_equity": round(float(equity[-1]), 4),
+        "statistically_meaningful": bool(n_trades >= 30),
+        "note": (None if n_trades >= 30 else
+                 "n_trades < 30: reported, but not statistically meaningful"),
+        "_trades": trades,
+    }
+
+
+def plot_equity_curve(results: dict, out_path: str, slippage_cents: float) -> None:
+    """Two panels: what the strategy earned, and what costs took from it.
+
+    LEFT  -- net cumulative PnL for every sample that traded, on shared axes,
+             with break-even drawn. On a chart where every line is under zero,
+             the zero line is the only reference that matters.
+    RIGHT -- the same trades for the liquid subsample, scored twice: once at the
+             midpoint with no costs at all, and once as actually modelled. The
+             gap between those two curves IS the cost of trading, and separating
+             them is the difference between "there was no edge" and "there was an
+             edge and it was too small to pay for" -- which are very different
+             claims about a market.
+    """
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(15.0, 6.0))
+    colors = {"full sample": "#d62728", "liquid subsample": "#1f77b4"}
+    drawn = False
+
+    for label, res in results.items():
+        t = res.get("_trades")
+        if t is None or not len(t):
+            continue
+        drawn = True
+        ax.plot(pd.to_datetime(t["settle_ts"], unit="s"), t["equity"], lw=1.6,
+                color=colors.get(label, "#666666"),
+                label="{} — {} trades, mean {:+.4f}/contract, Sharpe {}".format(
+                    label, res["n_trades"], res["mean_pnl_per_contract"],
+                    "n/a" if res["sharpe_per_trade"] is None
+                    else "{:+.3f}".format(res["sharpe_per_trade"])))
+
+    if not drawn:
+        ax.text(0.5, 0.5, "no trades taken", ha="center", va="center",
+                transform=ax.transAxes, fontsize=13, color="#666666")
+
+    ax.axhline(0, color="#333333", lw=1.0, ls="--", label="break-even")
+    ax.set_xlabel("Settlement date (out-of-sample window)")
+    ax.set_ylabel("Cumulative PnL, dollars per contract at unit size")
+    ax.set_title("Net of all costs", fontsize=11.5)
+    ax.grid(alpha=0.25, lw=0.6)
+    ax.legend(loc="lower left", fontsize=8.5, framealpha=0.9)
+
+    liq = results.get("liquid subsample", {})
+    t = liq.get("_trades")
+    if t is not None and len(t):
+        x = pd.to_datetime(t["settle_ts"], unit="s")
+        ax2.plot(x, t["gross_pnl_at_mid"].cumsum(), lw=1.6, color="#2ca02c",
+                 label="at the midpoint, no costs — the fantasy version")
+        ax2.plot(x, t["equity"], lw=1.6, color="#1f77b4",
+                 label="as modelled: spread + {:.0f}¢ slippage + fee".format(
+                     slippage_cents))
+        ax2.fill_between(x, t["gross_pnl_at_mid"].cumsum(), t["equity"],
+                         color="#d62728", alpha=0.13,
+                         label="cost of trading ({:.4f}/contract)".format(
+                             liq["mean_cost_spread"] + liq["mean_cost_slippage"]
+                             + liq["mean_cost_fee"]))
+        ax2.axhline(0, color="#333333", lw=1.0, ls="--")
+        ax2.set_title("Liquid subsample: where the edge went", fontsize=11.5)
+        ax2.set_xlabel("Settlement date (out-of-sample window)")
+        ax2.set_ylabel("Cumulative PnL per contract")
+        ax2.grid(alpha=0.25, lw=0.6)
+        ax2.legend(loc="lower left", fontsize=8.5, framealpha=0.9)
+    else:
+        ax2.axis("off")
+
+    fig.suptitle(
+        "Fade-the-mispricing backtest — out-of-sample equity curve\n"
+        "bins selected on the training window only; entry crosses the spread "
+        "(1 − yes_bid) plus {:.0f}¢ slippage, Kalshi taker fee deducted".format(
+            slippage_cents),
+        fontsize=12.5)
+    fig.autofmt_xdate()
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def run_backtest(df: pd.DataFrame, config: dict, out_dir: str = "outputs") -> dict:
+    """Backtest the full sample and the liquid subsample, and report both.
+
+    Both are run for the same reason the calibration reports both: the illiquid
+    markets are the ones the naive signal most wants to trade, and they are also
+    the ones that cannot actually be traded. Showing only the liquid result would
+    hide that the strategy's apparent edge lives where execution does not exist;
+    showing only the full result would blame the strategy for order books rather
+    than for its own logic.
+
+    Note for the README: the liquid subsample is defined by `max_spread`, which
+    was chosen after seeing the step-6 calibration. That disclosure travels with
+    every number computed on it, this one included.
+    """
+    liquid, _ = split_by_liquidity(df, config["max_spread"])
+    results = {
+        "full sample": backtest(df, config),
+        "liquid subsample": backtest(liquid, config),
+    }
+
+    plot_equity_curve(results, "{}/equity_curve.png".format(out_dir),
+                      config["slippage_cents"])
+
+    out = {}
+    for label, res in results.items():
+        res = dict(res)
+        res.pop("_trades", None)
+        out[label.replace(" ", "_")] = res
+    # headline mirrors, liquid subsample: the only window where the entry price
+    # the backtest assumes is one a real order could plausibly have got
+    liq = out["liquid_subsample"]
+    out["headline"] = {
+        "sample": "liquid subsample (spread <= {})".format(config["max_spread"]),
+        "n_trades": liq["n_trades"],
+        "sharpe_per_trade": liq.get("sharpe_per_trade"),
+        "max_drawdown": liq.get("max_drawdown"),
+        "mean_pnl_per_contract": liq.get("mean_pnl_per_contract"),
+        "hit_rate": liq.get("hit_rate"),
+        "statistically_meaningful": liq.get("statistically_meaningful"),
+    }
+    return out

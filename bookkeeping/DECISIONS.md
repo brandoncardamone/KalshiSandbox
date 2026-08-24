@@ -442,3 +442,80 @@ illiquid subsamples). **All ten unchanged.** The rule being followed is that
 touching committed analysis code is fine as long as the old numbers are
 reproduced and the check is written down — not that committed code is untouchable.
 
+
+---
+
+## D20 — Report drawdown in dollars per contract, not as the spec's ratio
+
+**Step 8.** Spec section 5.4 defines `max_drawdown(equity)` as
+`min(equity / peak - 1)`. That is the correct formula for a NAV curve that starts
+at some positive value. This project's equity curve is **cumulative profit and
+starts at exactly 0**, and on such a curve the formula divides by zero on the
+first trade and inverts its sign for every stretch where cumulative PnL is
+negative.
+
+It is not a theoretical problem. Run as written it returned **−459.25** for the
+full sample — a curve whose running peak was **4 cents** before it fell $18. The
+ratio is arithmetically correct and completely meaningless.
+
+**Decision:** `max_drawdown()` returns the largest peak-to-trough decline in the
+curve's own units, dollars per contract at unit size, with the running peak
+starting at 0 so a curve that only ever loses is measured from where it began.
+Measured: **−18.37** (full), **−11.37** (liquid).
+
+The spec's form is kept as `max_drawdown_fraction()`, evaluated only where the
+running peak is strictly positive, and every result carries a
+`max_drawdown_fraction_reliable` flag which is **False** for both samples here.
+Nothing is hidden; the unusable number is still emitted, labelled unusable.
+
+**Why deviate rather than invent a bankroll:** turning drawdown into a percentage
+requires a starting capital, and position sizing is explicitly out of scope. Any
+denominator would be a number made up to make a percentage possible.
+
+---
+
+## D21 — Ship the negative backtest without retuning anything
+
+**Step 8.** Both samples lose money: −0.0411 per contract on the full sample
+(t = −2.06, significantly negative), −0.0325 on the liquid subsample.
+
+Every knob within reach would have improved it — loosen `overprice_threshold`
+below 0.03, move the train/test split, drop the 1¢ slippage, restrict to the
+bins that happened to work. Each has a plausible-sounding justification available
+after the fact.
+
+**None were touched.** The spec is explicit, and the reasoning is not merely
+procedural: the entire value of the train/test split is that the parameters were
+fixed before the test window was seen. Adjusting one *after* seeing the
+out-of-sample result silently converts the test set into a training set, and
+every number in the step becomes a fitted number wearing an out-of-sample label.
+That is undetectable by a reader and would be the single most dishonest thing
+this project could do.
+
+`overprice_threshold` stays at 0.03, its spec value, and this is written into the
+cautions in `PROGRESS.md` for anyone who revisits the file later.
+
+---
+
+## D22 — t-test the gross edge before calling it an edge
+
+**Step 8.** The liquid subsample's gross PnL at the midpoint — before any costs —
+is **+0.0086 per contract**. Written down on its own that reads as a real if
+modest edge that transaction costs happened to exceed, which is a flattering and
+very common way to describe a losing backtest: *the signal worked, the market
+was too expensive to trade.*
+
+Its t-statistic is **+0.26**. On 169 trades with a standard deviation of 0.43,
++0.0086 is indistinguishable from zero. There was no edge to be eaten.
+
+Every PnL mean in the backtest now carries a t-statistic and a
+`significant_5pct` flag beside it, gross and net, on both samples. This exposed
+the mirror-image case too: the full sample's gross edge of +0.1989 is
+**significant at t = +9.03** and is nonetheless entirely fake — it is the
+empty-book artifact, cancelled almost exactly by a spread cost of −0.2199.
+
+**The rule this encodes:** significance and reality are different questions, and
+a mean without a standard error can be made to tell either story. Both are
+reported for every figure, so neither the flattering reading nor the dramatic one
+can be told without the number that contradicts it sitting next to it.
+
